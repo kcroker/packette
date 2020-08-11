@@ -16,107 +16,8 @@
 // Signals
 #include <signal.h>
 
-// DRS4 specific stuff
-#define CAP_LEN 1024
-#define CAP_LEN_DIV2 512
-
-// power of 2 for the receiving architecture pointer width
-#define ARCHITECTURE_WIDTH 8
-
-#define OVERFLOW_FLAG 0x0001
-#define UNDERFLOW_FLAG 0x0002
-#define NO_DATA_FLAG 0x0004
-
-// Used for writing 8 bytes of no data quickly
-#define NO_DATA_FLAG_4X 0x0004000400040004
-
-// Maximum payload size (in bytes)
-#define MAX_PAYLOAD 1024
-
-// How many bytes per sample (2 for 12 bit ADC)
-#define SAMPLE_RESOLUTION 2
-
-// How many channels?
-#define NUM_CHANNELS 64
-
-//
-// This quantity is only needed during assembly and is omitted otherwise
-//
-struct assembly {
-  unsigned long cap_offset;     // Writing offset during assembly
-};
-
-//
-// In the final data stream, they will only occur once at the start of the data.
-// In particular, seqnum will be the starting event number.
-//
-struct header {
-  unsigned long seqnum;         // This now monotonically increases across events and individual fragmented packets.
-  unsigned long channel_mask;   // 64 bit mask on which channels were enabled (to distinguish with zero suppression)
-  unsigned long roi_width;      // How large the ROI mode was (for indexing into the data file)
-};
-
-// 8 bytes
-struct channel_block {
-  unsigned long channel;        // This is the device channel
-  unsigned long drs4_stop;      // This is where the sampling stopped.  Sits here because there are many DRS4s.
-  unsigned int samples[0];      // This will always be roi_length when reconstructed or some fragment length, divisible by 8
-};
-
-//
-// These are quantities that will be shipped out on each packet
-// for fastest reconstruction.
-//
-struct packette_raw {
-  struct assembly assembly;
-  struct header header;
-  struct channel_block data;
-};
-
-// 
-// MACROS
-//
-
-// Returns a pointer to the head of the Nth event
-#define EVENT(N, packet) ( (unsigned short *) ( (packet).data + ( (sizeof struct channel_block) + (packet).roi_width) * active_channels * (N) ) )
-
-// Returns a pointer to the head of the requested channel of the Nth event if present, otherwise returns NULL
-#define CHANNEL(channel, packet)  ( (unsigned short *) ( (packet).channel_map[(channel)] < 0 ? 0x0 : (packet).channel_map[(channel)]*( (packet).roi_width + (sizeof struct channel_block)) ) )
-
-//
-// This is the format of the final written file
-//
-struct packette_processed {
-
-  struct header header;
-
-  // Convenience quantities
-  unsigned char active_channels;
-  char channel_map[NUM_CHANNELS];
-		   
-  // Here be dragons
-  struct channel_block data[0];
-
-  //
-  // For example, suppose you are interested in the 7th event, channel 8, use the macro:
-  //
-  //   unsigned short *ptr;
-  //   ptr = EVENT(7, packet) + CHANNEL(9, packet);
-  //
-  
-  // WARNING: active_channels must be set globally!
-  //
-  
-  //   
-  //
-  // 
-  // For example, if you want to read the 16 bit short describing the 109th capacitor of the 8th channel, relative to the stop sample:
-  //    val = *( (unsigned short *) (event.data + event.header.roi_width*event.channel[8] + 109*SAMPLE_RESOLUTION))
-  //
-  // Or get a pointer to that channels data
-  
-};
- 
+// Local stuff
+#include "packette.h"
 
 //
 // GLOBALS (because short and simple, the UNIX way)
@@ -198,7 +99,7 @@ void preprocess_first_packet(struct packette_raw *p) {
   // https://stackoverflow.com/questions/2422712/rounding-integer-division-instead-of-truncating
   //
   // AAA (assuming that there is only one ROI region per channel)
-  fragments_per_channel = (p->header.roi_width * SAMPLE_RESOLUTION + (MAX_PAYLOAD - 1)) / MAX_PAYLOAD;
+  fragments_per_channel = (p->header.roi_width * SAMPLE_WIDTH + (MAX_PAYLOAD - 1)) / MAX_PAYLOAD;
   
   // Allocate the placeholder block
   if (! (emptyBlock = (unsigned long *) malloc(p->header.roi_width))) {
@@ -352,7 +253,7 @@ int main(int argc, char **argv) {
   // Since we want to do recvmmsg() but we don't know the roi_width
   // We can intake a first packet normally and extract it, but that's hella awkward
   // So for now just take it from the command line
-  bufsize = sizeof(struct packette_raw) + roi_width;
+  bufsize = sizeof(struct packette_raw) + roi_width*SAMPLE_WIDTH;
 
   // Now compute the optimal vlen via truncated idiv
   vlen = L2_CACHE / bufsize;

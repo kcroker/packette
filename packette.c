@@ -6,11 +6,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 
 // Multiprocess
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+// Signals
+#include <signal.h>
 
 // DRS4 specific stuff
 #define CAP_LEN 1024
@@ -212,25 +216,131 @@ void preprocess_first_packet(struct packette_raw *p) {
   // Process this first packet!
   (*process_packet_fptr)(p);
 }
-				  
+
+//
+// Called when the child receives SIGINT
+//
+void flushChild(int signum) {
+  // You can use write(), getpid() in a signal handler:
+  //  https://pubs.opengroup.org/onlinepubs/009695399/functions/xsh_chap02_04.html
+  char buf[1024];
+  char *ptr;
+  unsigned short len;
+  
+  sprintf(buf,
+	  "Packette (PID %d): Received SIGINT, finishing up...\n\0",
+	  getpid());
+
+  // Gotta go manual here, because inside a signal()
+  ptr = buf;
+  while(*(ptr++) != 0);
+  write(2, buf, ptr - buf);
+
+  sprintf(buf,
+	  "Packette (PID %d): Done.\n\0",
+	  getpid());
+
+  // Gotta go manual here, because inside a signal()
+  ptr = buf;
+  while(*(ptr++) != 0);
+  write(2, buf, ptr - buf);
+  
+  exit(0);
+}
+
 int main(int argc, char **argv) {
 
   // Socket stuff
-#define VLEN 10
-#define BUFSIZE 200
+
+  // This will be the number of UDP packets to pull at once
+  // L2 cache on my machine is 256K
+  //
+  // We want all the msgs to fit into L2 cache
+
+#define L2_CACHE 256000
 #define TIMEOUT 1  
 
   int sockfd, retval, i;
-  struct sockaddr_in addr;
-  struct mmsghdr msgs[VLEN];
-  struct iovec iovecs[VLEN];
-  char bufs[VLEN][BUFSIZE+1];
+  struct sockaddr_in sa;
   struct timespec timeout;
-
+  unsigned int bufsize;
+  unsigned int vlen;
+  
+  // All these need to be length vlen, suitable to fit vlen of bufsize into L2
+  struct mmsghdr *msgs;
+  struct iovec *iovecs;
+  void **bufs;
+  
   // Multiprocessing stuff
   pid_t pid;
-  pid_t *kids;
-  unsigned char children;
+  pid_t *kids;  
+  unsigned char children, k;
+
+  // Argument parsing stuff
+  int flags, opt;
+  int nsecs, tfnd;
+  unsigned short port;
+  unsigned long roi_width;
+  unsigned long max_packets;
+  char *addr_str;
+
+  // Signal handling stuff
+  struct sigaction new_action, old_action;
+
+  // lol basic shit in C is annoying.
+  // Default values
+  port = 1338;
+  roi_width = 1024;
+  children = 1;
+  addr_str = 0x0;
+  max_packets = ~0;
+  
+  /////////////////// ARGUMENT PARSING //////////////////
+  
+  while ((opt = getopt(argc, argv, "t:p:w:m:")) != -1) {
+    switch (opt) {
+    case 't':
+      children = atoi(optarg);
+      break;
+    case 'p':
+      port = atoi(optarg);
+      break;
+    case 'w':
+      roi_width = atoi(optarg);
+      break;
+    case 'm':
+      max_packets = strtoul(optarg, NULL, 10);
+      break;
+    default: /* '?' */
+      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-w samples per ROI] [-m max packets per thread] BIND_ADDRESS\n",
+	      argv[0]);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  // Now grab mandatory positional arguments
+  if(optind >= argc) {
+    fprintf(stderr, "Expected bind address after options\n");
+    exit(EXIT_FAILURE);
+  }
+
+  // Get the IP address
+  addr_str = argv[optind];
+
+  // Try to parse it out
+  if(!inet_pton(AF_INET, addr_str, &(sa.sin_addr))) {
+    perror("inet_pton()");
+    exit(EXIT_FAILURE);
+  }
+    
+  // Report what we've been asked to do
+  fprintf(stderr,
+	  "Packette (parent): %d children will bind at %s, starting from port %d\n",
+	  children,
+	  argv[optind],
+	  port);
+
+  ///////////////// PARSING COMPLETE ///////////////////
   
   // Set the initial packet processing pointer to the preprocessor
   process_packet_fptr = &preprocess_first_packet;
@@ -239,44 +349,65 @@ int main(int argc, char **argv) {
   for(i = 0; i < NUM_CHANNELS; ++i)
     channel_map[i] = -1;
 
+  // Since we want to do recvmmsg() but we don't know the roi_width
+  // We can intake a first packet normally and extract it, but that's hella awkward
+  // So for now just take it from the command line
+  bufsize = sizeof(struct packette_raw) + roi_width;
+
+  // Now compute the optimal vlen via truncated idiv
+  vlen = L2_CACHE / bufsize;
+  fprintf(stderr,
+	  "Packette (parent): Determined %d packets will saturate L2 cache of %d bytes\n",
+	  vlen,
+	  L2_CACHE);
+  
   //
   // No IPC is required between children
   // but we want the parent to receive the Ctrl+C and clean up the children.
   //
-  children = atoi(argv[3]);
   pid = 1;
   if( ! (kids = (pid_t *)malloc(sizeof(pid_t) * children))) {
     perror("malloc()");
     exit(-46);
   }
   
-  //
-  // SPAWN
+  ////////////////////// SPAWNING ////////////////////
+  
   // Loop exits when:
   //    pid == 0 (i.e. you're a child)
   //           OR
   //    children == 0 (i.e. you've reached the end of your reproductive lifecycle)
   // Implemented as a negation.
   //
-  fprintf(stderr, "Packette (parent): Spawning %d children...\n", children); 
-  while(pid && children) {
+  fprintf(stderr, "Packette (parent): Spawning %d children...\n", children);
+  
+  k = children;
+  while(pid && k) {
     pid = fork();
     if(pid)
-      kids[--children] = pid;
+      kids[--k] = pid;
   }
   
-  ////////////////// FORKED ////////////////////
+  //////////////////////// FORKED ////////////////////
+  
   if(!pid) {
     ////////////////// CHILD ///////////////////
 
     // What is our purpose?
     pid = getpid();
 
-    // To open socket.
-  
-    // Starting event sequence number is given at the command line
-    // (write a C interface for eevee for quick register reads/writes)
-    //
+    // Install signal handler so we cleanly flush packets
+    // From GNU docs:
+    //  https://www.gnu.org/software/libc/manual/html_node/Sigaction-Function-Example.html
+    new_action.sa_handler = &flushChild;
+    sigemptyset (&new_action.sa_mask);
+    new_action.sa_flags = 0;
+
+    sigaction(SIGINT, NULL, &old_action);
+    if (old_action.sa_handler != SIG_IGN)
+      sigaction(SIGINT, &new_action, NULL);
+
+    // Get ready to receive multiple messages on a socket!
     // Code adapted from: man 2 recvmmsg, EXAMPLE
 
     // Get a socket
@@ -286,27 +417,60 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
 
-    sa.sin_family = AF_INET;
-
     // Get the given IP and port from strings
     // Set the port (truncate, base 10, ignore bs characters)
     // XXX Don't check for errors ;)
-    inet_pton(AF_INET, argv[1], &(sa.sin_addr));
-    sa.sin_port = htons(strtoul(argv[2], NULL, 10));
+    sa.sin_port = port + k - 1;
+    sa.sin_family = AF_INET;
 
-    // Why does this always have an explicit cast?
+    // Why does this always have an explicit cast in the examples?
+    // I guess so the code block is self-explanatory...
     if (bind(sockfd, &sa, sizeof(sa)) == -1) {
       perror("bind()");
       exit(EXIT_FAILURE);
     }
 
+    // Report success
+    fprintf(stderr,
+	    "Packette (PID %d): Listening at %s:%d...\n",
+	    pid,
+	    addr_str,
+	    sa.sin_port);
+        
+    // Now need to allocate the message structures
+    retval =
+      (msgs = (struct mmsghdr *)malloc( sizeof(struct mmsghdr) * vlen)) &&
+      (iovecs = (struct iovec *)malloc( sizeof(struct iovec) * vlen)) &&
+      (bufs = malloc( sizeof(void *) * vlen));
+    
+    if (!retval) {
+      perror("malloc()");
+      exit(EXIT_FAILURE);
+    }
+
+    // Allocate buffers sufficient to receive expected packets
+    for(i = 0; i < vlen; ++i) {
+      if( ! (bufs[i] = (struct packette_raw *)malloc(bufsize))) {
+	perror("malloc()");
+	exit(EXIT_FAILURE);
+      }
+    }
+
+    // Report success.
+    fprintf(stderr,
+	    "Packette (PID %d): Allocated %d bytes for direct socket transfer of %d packets.\n",
+	    pid,
+	    bufsize * vlen,
+	    vlen);
+    
     // Now we do the magic.
-    // We read in directly to packet buffers
-    // That we will cast as structs
-    memset(msgs, 0, sizeof(msgs));
-    for (i = 0; i < VLEN; i++) {
+    // We read in directly to payload buffers
+    memset(msgs, 0, sizeof(struct mmsghdr) * vlen);
+
+    // Set this up to directly transfer payloads
+    for (i = 0; i < vlen; i++) {
       iovecs[i].iov_base         = bufs[i];
-      iovecs[i].iov_len          = BUFSIZE;
+      iovecs[i].iov_len          = bufsize;
       msgs[i].msg_hdr.msg_iov    = &iovecs[i];
       msgs[i].msg_hdr.msg_iovlen = 1;
     }
@@ -318,26 +482,48 @@ int main(int argc, char **argv) {
     // Pull as many as will fit in L2 cache on your platform
     while(1) {
 
-      retval = recvmmsg(sockfd, msgs, VLEN, 0, &timeout);
+      retval = recvmmsg(sockfd, msgs, vlen, 0, &timeout);
       if (retval == -1) {
     	perror("recvmmsg()");
     	exit(EXIT_FAILURE);
       }
 
-      printf("%d messages received\n", retval);
-      for (i = 0; i < retval; i++) {
-    	bufs[i][msgs[i].msg_len] = 0;
-    	printf("%d %s", i+1, bufs[i]);
-      }
-    }    
+      /* printf("%d messages received\n", retval); */
+      /* for (i = 0; i < retval; i++) { */
+      /* 	bufs[i][msgs[i].msg_len] = 0; */
+      /* 	printf("%d %s", i+1, bufs[i]); */
+      /* } */
+    }
+
+    // Free the scatter-gather buffers
+    for(i = 0; i < vlen; ++i)
+      free(bufs[i]);
+
+    // Free the message structures themselves
+    free(bufs);
+    free(iovecs);
+    free(msgs);
+
   }
   else {
     ////////////////// PARENT //////////////////
-    children = atoi(argv[3]);
 
-    while(children--) {
-      waitpid(kids[children], &retval, 0);
-      fprintf(stderr, "Packette (parent): child-%d (PID %d) has completed\n", children, kids[children]);
+    // Block SIGINT
+    sigemptyset (&new_action.sa_mask);
+    new_action.sa_handler = SIG_IGN;
+    sigaction(SIGINT, &new_action, NULL);
+
+    fprintf(stderr,
+	    "Packette (parent): waiting for children to finish...\n");
+    
+	    
+    k = children;
+    while(k--) {
+      waitpid(kids[k], &retval, 0);
+      fprintf(stderr,
+	      "Packette (parent): child-%d (PID %d) has completed\n",
+	      k,
+	      kids[k]);
     }
     
     exit(0);

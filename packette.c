@@ -1,3 +1,17 @@
+#define _GNU_SOURCE
+
+// Sockets
+#include <netinet/ip.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+
+// Multiprocess
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 // DRS4 specific stuff
 #define CAP_LEN 1024
 #define CAP_LEN_DIV2 512
@@ -105,9 +119,9 @@ struct packette_processed {
 //
 // Note that things are unsigned long because we want to avoid implicit casts
 // during computation.
-void (*process_packet_fptr)(struct packette *p);
+void (*process_packet_fptr)(struct packette_raw *p);
 unsigned long active_channels;
-unsigned char channel_map[MAX_CHANNELS];
+unsigned char channel_map[NUM_CHANNELS];
 unsigned long fragments_per_channel;
 unsigned long current_evt_seqnum;
 
@@ -135,42 +149,7 @@ unsigned long buildChannelMap(unsigned long mask) {
   return active;
 }
 
-//
-// Perform initialization based on the first packet received
-//
-void preprocess_first_packet(struct packette *p) {
-
-  unsigned long mask;
-  
-  // Build the channel map, compute the number of active channels
-  active_channels = buildChannelMap(p->channel_mask);
-  
-  // Compute the fragments per channel
-  //
-  // Standard idiom for positive integers:
-  // https://stackoverflow.com/questions/2422712/rounding-integer-division-instead-of-truncating
-  //
-  // AAA (assuming that there is only one ROI region per channel)
-  fragments_per_channel = (p->roi_width * SAMPLE_RESOLUTION + (MAX_PAYLOAD - 1)) / MAX_PAYLOAD
-  
-  // Allocate the placeholder block
-  if (! emptyBlock = (unsigned long *) malloc(p->roi_width) ) {
-    exit(4);
-  }
-
-  // Assign once, decrement once
-  for(i = (roi_width >> 3); i > 0;)
-    emptyBlock[--i] = NO_DATA_FLAG_4X;
-
-  // Set the process function to subsequent packets
-  // (this way we avoid an if every time to see if we are first)
-  process_packet_fptr = &process_packet;
-
-  // Process this first packet!
-  (*process_packet_fptr)(p);
-}
-				  
-/* void process_packet(struct packette *p) { */
+void process_packet(struct packette_raw *p) { 
 
 /*   // If we exceeded the boundary for the next event? */
 /*   next_event_seqnum = current_event_seqnum + (active_channels * fragments_per_channel); */
@@ -196,11 +175,51 @@ void preprocess_first_packet(struct packette *p) {
 /* void cleanup(void) { */
 
 /*   free(emptyBlock); */
-/* } */
+} 
 
+//
+// Perform initialization based on the first packet received
+//
+void preprocess_first_packet(struct packette_raw *p) {
+
+  unsigned long mask;
+  unsigned char i;
+  
+  // Build the channel map, compute the number of active channels
+  active_channels = buildChannelMap(p->header.channel_mask);
+  
+  // Compute the fragments per channel
+  //
+  // Standard idiom for positive integers:
+  // https://stackoverflow.com/questions/2422712/rounding-integer-division-instead-of-truncating
+  //
+  // AAA (assuming that there is only one ROI region per channel)
+  fragments_per_channel = (p->header.roi_width * SAMPLE_RESOLUTION + (MAX_PAYLOAD - 1)) / MAX_PAYLOAD;
+  
+  // Allocate the placeholder block
+  if (! (emptyBlock = (unsigned long *) malloc(p->header.roi_width))) {
+    exit(4);
+  }
+
+  // Assign once, decrement once
+  for(i = (p->header.roi_width >> 3); i > 0;)
+    emptyBlock[--i] = NO_DATA_FLAG_4X;
+
+  // Set the process function to subsequent packets
+  // (this way we avoid an if every time to see if we are first)
+  process_packet_fptr = &process_packet;
+
+  // Process this first packet!
+  (*process_packet_fptr)(p);
+}
+				  
 int main(int argc, char **argv) {
 
   // Socket stuff
+#define VLEN 10
+#define BUFSIZE 200
+#define TIMEOUT 1  
+
   int sockfd, retval, i;
   struct sockaddr_in addr;
   struct mmsghdr msgs[VLEN];
@@ -211,12 +230,13 @@ int main(int argc, char **argv) {
   // Multiprocessing stuff
   pid_t pid;
   pid_t *kids;
+  unsigned char children;
   
   // Set the initial packet processing pointer to the preprocessor
   process_packet_fptr = &preprocess_first_packet;
 
   // Initialize the channel map
-  for(i = 0; i < MAX_CHANNELS; ++i)
+  for(i = 0; i < NUM_CHANNELS; ++i)
     channel_map[i] = -1;
 
   //
@@ -225,9 +245,9 @@ int main(int argc, char **argv) {
   //
   children = atoi(argv[3]);
   pid = 1;
-  if( !kids = (pid_t *)malloc(sizeof(pid_t) * children)) {
+  if( ! (kids = (pid_t *)malloc(sizeof(pid_t) * children))) {
     perror("malloc()");
-    exit(FUCK_YOU);
+    exit(-46);
   }
   
   //
@@ -238,88 +258,88 @@ int main(int argc, char **argv) {
   //    children == 0 (i.e. you've reached the end of your reproductive lifecycle)
   // Implemented as a negation.
   //
-  // Note children is mutated in second position and AND short circuits
-  // So if we've made all of our kids, then children
-  while(pid && --children)
-    kids[children] = pid = fork();
-
+  fprintf(stderr, "Packette (parent): Spawning %d children...\n", children); 
+  while(pid && children) {
+    pid = fork();
+    if(pid)
+      kids[--children] = pid;
+  }
+  
   ////////////////// FORKED ////////////////////
   if(!pid) {
     ////////////////// CHILD ///////////////////
-    print("I am a forked child!");
-    exit(0);
 
-    // Open the socket
+    // What is our purpose?
+    pid = getpid();
+
+    // To open socket.
   
     // Starting event sequence number is given at the command line
     // (write a C interface for eevee for quick register reads/writes)
     //
     // Code adapted from: man 2 recvmmsg, EXAMPLE
 
-#define VLEN 10
-#define BUFSIZE 200
-#define TIMEOUT 1  
+    // Get a socket
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd == -1) {
+      perror("socket()");
+      exit(EXIT_FAILURE);
+    }
 
-    /* // Get a socket */
-    /* sockfd = socket(AF_INET, SOCK_DGRAM, 0); */
-    /* if (sockfd == -1) { */
-    /*   perror("socket()"); */
-    /*   exit(EXIT_FAILURE); */
-    /* } */
+    sa.sin_family = AF_INET;
 
-    /* sa.sin_family = AF_INET; */
+    // Get the given IP and port from strings
+    // Set the port (truncate, base 10, ignore bs characters)
+    // XXX Don't check for errors ;)
+    inet_pton(AF_INET, argv[1], &(sa.sin_addr));
+    sa.sin_port = htons(strtoul(argv[2], NULL, 10));
 
-    /* // Get the given IP and port from strings */
-    /* // Set the port (truncate, base 10, ignore bs characters) */
-    /* // XXX Don't check for errors ;) */
-    /* inet_pton(AF_INET, argv[1], &(sa.sin_addr)); */
-    /* sa.sin_port = htons(strtoul(argv[2], NULL, 10)); */
+    // Why does this always have an explicit cast?
+    if (bind(sockfd, &sa, sizeof(sa)) == -1) {
+      perror("bind()");
+      exit(EXIT_FAILURE);
+    }
 
-    /* // Why does this always have an explicit cast? */
-    /* if (bind(sockfd, &sa, sizeof(sa)) == -1) { */
-    /*   perror("bind()"); */
-    /*   exit(EXIT_FAILURE); */
-    /* } */
+    // Now we do the magic.
+    // We read in directly to packet buffers
+    // That we will cast as structs
+    memset(msgs, 0, sizeof(msgs));
+    for (i = 0; i < VLEN; i++) {
+      iovecs[i].iov_base         = bufs[i];
+      iovecs[i].iov_len          = BUFSIZE;
+      msgs[i].msg_hdr.msg_iov    = &iovecs[i];
+      msgs[i].msg_hdr.msg_iovlen = 1;
+    }
 
-    /* // Now we do the magic. */
-    /* // We read in directly to packet buffers */
-    /* // That we will cast as structs */
-    /* memset(msgs, 0, sizeof(msgs)); */
-    /* for (i = 0; i < VLEN; i++) { */
-    /*   iovecs[i].iov_base         = bufs[i]; */
-    /*   iovecs[i].iov_len          = BUFSIZE; */
-    /*   msgs[i].msg_hdr.msg_iov    = &iovecs[i]; */
-    /*   msgs[i].msg_hdr.msg_iovlen = 1; */
-    /* } */
+    timeout.tv_sec = TIMEOUT;
+    timeout.tv_nsec = 0;
 
-    /* timeout.tv_sec = TIMEOUT; */
-    /* timeout.tv_nsec = 0; */
+    // Now pull packets in bulk
+    // Pull as many as will fit in L2 cache on your platform
+    while(1) {
 
-    /* // Now pull packets in bulk */
-    /* // Pull as many as will fit in L2 cache on your platform */
-    /* while(1) { */
+      retval = recvmmsg(sockfd, msgs, VLEN, 0, &timeout);
+      if (retval == -1) {
+    	perror("recvmmsg()");
+    	exit(EXIT_FAILURE);
+      }
 
-    /*   retval = recvmmsg(sockfd, msgs, VLEN, 0, &timeout); */
-    /*   if (retval == -1) { */
-    /* 	perror("recvmmsg()"); */
-    /* 	exit(EXIT_FAILURE); */
-    /*   } */
-
-    /*   printf("%d messages received\n", retval); */
-    /*   for (i = 0; i < retval; i++) { */
-    /* 	bufs[i][msgs[i].msg_len] = 0; */
-    /* 	printf("%d %s", i+1, bufs[i]); */
-    /*   } */
-    /* } */    
+      printf("%d messages received\n", retval);
+      for (i = 0; i < retval; i++) {
+    	bufs[i][msgs[i].msg_len] = 0;
+    	printf("%d %s", i+1, bufs[i]);
+      }
+    }    
   }
   else {
     ////////////////// PARENT //////////////////
-    printf("I am the parent.  These are my kids");
     children = atoi(argv[3]);
-    
-    while(--children)
-      printf("%d\n", kids[children]);
 
+    while(children--) {
+      waitpid(kids[children], &retval, 0);
+      fprintf(stderr, "Packette (parent): child-%d (PID %d) has completed\n", children, kids[children]);
+    }
+    
     exit(0);
   }
   

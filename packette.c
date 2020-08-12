@@ -16,12 +16,14 @@
 // Signals
 #include <signal.h>
 
+// Time
+#include <time.h>
+
 // Local stuff
 #include "packette.h"
 
-//
-// GLOBALS (because short and simple, the UNIX way)
-//
+///////////////////////////// GLOBALS /////////////////////////
+
 // Note that things are unsigned long because we want to avoid implicit casts
 // during computation.
 void (*process_packet_fptr)(struct packette_raw *p);
@@ -32,6 +34,8 @@ unsigned long current_evt_seqnum;
 
 unsigned long *emptyBlock;
 
+// This is used to signal that we should cleanup
+volatile sig_atomic_t interrupt_flag = 0;
 
 //
 // Build channel map.  Returns the number of active channels
@@ -53,6 +57,10 @@ unsigned long buildChannelMap(unsigned long mask) {
 
   return active;
 }
+
+//
+// Everytime we push to the stream
+//
 
 void process_packet(struct packette_raw *p) { 
 
@@ -121,53 +129,27 @@ void preprocess_first_packet(struct packette_raw *p) {
 //
 // Called when the child receives SIGINT
 //
+
 void flushChild(int signum) {
-  // You can use write(), getpid() in a signal handler:
-  //  https://pubs.opengroup.org/onlinepubs/009695399/functions/xsh_chap02_04.html
-  char buf[1024];
-  char *ptr;
-  unsigned short len;
-  
-  sprintf(buf,
-	  "Packette (PID %d): Received SIGINT, finishing up...\n\0",
-	  getpid());
 
-  // Gotta go manual here, because inside a signal()
-  ptr = buf;
-  while(*(ptr++) != 0);
-  write(2, buf, ptr - buf);
-
-  sprintf(buf,
-	  "Packette (PID %d): Done.\n\0",
-	  getpid());
-
-  // Gotta go manual here, because inside a signal()
-  ptr = buf;
-  while(*(ptr++) != 0);
-  write(2, buf, ptr - buf);
-  
-  exit(0);
+  // This is a special volatile signal-safe integer type:
+  //  https://wiki.sei.cmu.edu/confluence/display/c/SIG31-C.+Do+not+access+shared+objects+in+signal+handlers
+  interrupt_flag = 1;
 }
 
-int main(int argc, char **argv) {
-
-  // Socket stuff
-
-  // This will be the number of UDP packets to pull at once
-  // L2 cache on my machine is 256K
-  //
-  // We want all the msgs to fit into L2 cache
-
 #define L2_CACHE 256000
-#define TIMEOUT 1  
+#define TIMEOUT 1
 
+int main(int argc, char **argv) {
+  
+  // Socket stuff
   int sockfd, retval, i;
   struct sockaddr_in sa;
   struct timespec timeout;
   unsigned int bufsize;
   unsigned int vlen;
   
-  // All these need to be length vlen, suitable to fit vlen of bufsize into L2
+  // recvmmsg() stuff
   struct mmsghdr *msgs;
   struct iovec *iovecs;
   void **bufs;
@@ -188,6 +170,13 @@ int main(int argc, char **argv) {
   // Signal handling stuff
   struct sigaction new_action, old_action;
 
+  // Files and data output stuff
+  FILE *ordered_file;            // Stage I reconstruction (ordered and stripped) output
+  FILE *orphan_file;               // Stage II reconstruction (unordered, raw) output
+  struct tm lt;            // For holding time stuff
+  time_t secs;
+  char tmp1[1024], tmp2[1024];
+  
   // lol basic shit in C is annoying.
   // Default values
   port = 1338;
@@ -308,6 +297,32 @@ int main(int argc, char **argv) {
     if (old_action.sa_handler != SIG_IGN)
       sigaction(SIGINT, &new_action, NULL);
 
+    ////////////////// STREAMS //////////////////
+    
+    // Make the filename
+    //
+    // (YIKES We had to use the _r call here, due to "thread safety"
+    //  I guess threads is more than just pthreads, but its also processes!)
+    secs = time(NULL);
+    localtime_r(&secs, &lt);
+    
+    strftime(tmp1, 1024, "%Y-%m-%d_%H-%M-%S", &lt);
+    sprintf(tmp2, "%s_%s_%d.ordered", tmp1, addr_str, port);
+    	    
+    // Open streams for output
+    if( ! (ordered_file = fopen(tmp2, "wb"))) {
+      perror("fopen()");
+      exit(EXIT_FAILURE);
+    }
+
+    sprintf(tmp2, "%s_%s_%d.orphans", tmp1, addr_str, port);
+    
+    // Open streams for output
+    if( ! (orphan_file = fopen(tmp2, "wb"))) {
+      perror("fopen()");
+      exit(EXIT_FAILURE);
+    }
+    
     // Get ready to receive multiple messages on a socket!
     // Code adapted from: man 2 recvmmsg, EXAMPLE
 
@@ -384,11 +399,21 @@ int main(int argc, char **argv) {
     while(1) {
 
       retval = recvmmsg(sockfd, msgs, vlen, 0, &timeout);
-      if (retval == -1) {
+      if (retval == -1)
     	perror("recvmmsg()");
-    	exit(EXIT_FAILURE);
-      }
 
+      // Process the packets
+      
+      // Check for a Ctrl+C interrupt
+      if(interrupt_flag) {
+
+	// Someone pressed Ctrl+C
+	fprintf(stderr,
+		"Packette (PID %d): Received SIGINT, finishing up...\n",
+		pid);
+	break;
+      }
+      
       /* printf("%d messages received\n", retval); */
       /* for (i = 0; i < retval; i++) { */
       /* 	bufs[i][msgs[i].msg_len] = 0; */
@@ -396,6 +421,10 @@ int main(int argc, char **argv) {
       /* } */
     }
 
+    // Close the file descriptors
+    fclose(ordered_file);
+    fclose(orphan_file);
+    
     // Free the scatter-gather buffers
     for(i = 0; i < vlen; ++i)
       free(bufs[i]);
@@ -405,6 +434,9 @@ int main(int argc, char **argv) {
     free(iovecs);
     free(msgs);
 
+    fprintf(stderr,
+	    "Packette (PID %d): Done.\n",
+	    pid);
   }
   else {
     ////////////////// PARENT //////////////////

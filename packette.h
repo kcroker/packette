@@ -22,10 +22,16 @@
 #define NUM_CHANNELS 64
 
 //
+// Run header - that allows reproduction of board state.
+// This is a separate thing.
+//
+
+//
 // This quantity is only needed during assembly and is omitted otherwise
 //
 struct assembly {
-  unsigned long cap_offset;     // Writing offset during assembly
+  unsigned long magic;               // Magic for checking against corruption and proper structure
+  unsigned long relative_offset;     // Location Writing offset during assembly
 };
 
 //
@@ -34,13 +40,23 @@ struct assembly {
 //
 // In data streamed from the board, this header is present in every packet
 //
+// 32 bytes
 struct header {
+
+  //
+  // 2 bytes: event number
+  // 2 bytes: trigger time low (because we only need differences)
+  // 2 bytes: trigger time low
+  // 2 bytes: RESERVED
+  //
+  unsigned char downstream[8];  // Block of packed data for later use
+  
   unsigned long seqnum;         // This now monotonically increases across events and individual fragmented packets.
-  unsigned long channel_mask;   // 64 bit mask on which channels were enabled (to distinguish from zero suppression)
+  unsigned long channel_mask;   // Dyanmical: which channels were on in this event
   unsigned long roi_width;      // How large the ROI mode was (how many samples are we expecting)
 };
 
-// 8 bytes
+// 16 bytes + roi_width*SAMPLE_WIDTH
 struct channel_block {
   unsigned long channel;        // This is the device channel
   unsigned long drs4_stop;      // This is where the sampling stopped.  Sits here because there are many DRS4s.
@@ -52,19 +68,26 @@ struct channel_block {
 // for fastest reconstruction.
 //
 struct packette_raw {
-  struct assembly assembly;
-  struct header header;
-  struct channel_block data;
+  struct assembly assembly;    // 16 bytes
+  struct header header;        // 32 bytes
+  struct channel_block data;   // 16 bytes + roi_width*SAMPLE_WIDTH
 };
 
+////////////////////// CONSTRAINTS ////////////////////////
 //
-// This is the format of the final written file
+//    roi_width * SAMPLE_WIDTH must be a multiple of 8
+//
+//
+
+
+//
+// XXX This is the format of the final written file
 //
 struct packette_processed {
 
   struct header header;
 
-  // Convenience quantities
+  // XXX Convenience quantities
   unsigned char active_channels;
   char channel_map[NUM_CHANNELS];
 		   

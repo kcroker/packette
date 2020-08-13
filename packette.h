@@ -21,32 +21,43 @@
 // How many channels?
 #define NUM_CHANNELS 64
 
+#if (NUM_CHANNELS > 64)
+#error "In this version, channel masks are encoded using a 64-bit long."
+#endif
+
 //
 // Run header - that allows reproduction of board state.
 // This is a separate thing.
 //
 
 //
-// This quantity is only needed during assembly and is omitted otherwise
+// These quantities are only needed during assembly and are discarded  
 //
+// 16 bytes
 struct assembly {
-  unsigned long magic;               // Magic for checking against corruption and proper structure
-  unsigned long relative_offset;     // Location Writing offset during assembly
+  
+  //
+  // 2 bytes: relative sample offset (used during assembly)
+  // 6 bytes: board MAC address (magic)
+  //
+  // This lets us keep an 8 byte alignment, and also
+  // immediate rip out what we need for assembly in the first 2 bytes
+  // of the packed downstream[8].
+  //
+  union {
+    unsigned short rel_offset;    // Relative sample offset, for writng during assembly
+    unsigned char downstream[8];  
+  } header;
+  
+  unsigned long seqnum;           // This now monotonically increases across events and individual fragmented packets.
 };
 
-//
-// In the final data stream, this will only occur once at the start of the data.
-// In particular, seqnum will be the starting event number.
-//
-// In data streamed from the board, this header is present in every packet
-//
-// 32 bytes
+// 16 bytes
 struct header {
 
   //
-  // 2 bytes: event number
-  // 2 bytes: trigger time low (because we only need differences)
-  // 2 bytes: trigger time low
+  // 2 bytes: event number (used during assembly)
+  // 4 bytes: trigger time low
   // 2 bytes: RESERVED
   //
   // This lets us keep an 8 byte alignment, and also
@@ -55,19 +66,31 @@ struct header {
   //
   union {
     unsigned short eventnum;      
-    unsigned char downstream[8];  // Block of packed data for later use
+    unsigned char downstream[8]; // Block of packed data for later use
   } event;
   
-  unsigned long seqnum;         // This now monotonically increases across events and individual fragmented packets.
-  unsigned long channel_mask;   // Dyanmical: which channels were on in this event
-  unsigned long roi_width;      // How large the ROI mode was (how many samples are we expecting)
+  unsigned long channel_mask;    // Dyanmical: which channels were on in this event
 };
 
-// 16 bytes + roi_width*SAMPLE_WIDTH
-struct channel_block {
-  unsigned long channel;        // This is the device channel
-  unsigned long drs4_stop;      // This is where the sampling stopped.  Sits here because there are many DRS4s.
-  unsigned int samples[0];      // This will always be roi_length when reconstructed or some fragment length, divisible by 8
+// 8 bytes + length
+struct channel {
+
+  //
+  // 2 bytes: The number of samples (used during assembly)
+  // 1 byte:  This is the device channel
+  // 2 bytes: This is where the sampling stopped.  Sits here because there are many DRS4s.
+  // 3 bytes: RESERVED 
+  //
+  // This lets us keep an 8 byte alignment, and also
+  // immediately rip out the number of samples from the
+  // first 2 bytes of the packed downstream[8].
+  //
+  union {
+    unsigned short num_samples;
+    unsigned char downstream[8];
+  } header;
+
+  unsigned short samples[0];     // 0 length.  Casted pointer to the first sample
 };
 
 //
@@ -76,8 +99,8 @@ struct channel_block {
 //
 struct packette_raw {
   struct assembly assembly;    // 16 bytes
-  struct header header;        // 32 bytes
-  struct channel_block data;   // 16 bytes + roi_width*SAMPLE_WIDTH
+  struct header header;        // 16 bytes
+  struct channel_block data;   // 8 bytes + (variable)roi_width*SAMPLE_WIDTH
 };
 
 #define BUFSIZE (sizeof(struct packette_raw) + MAX_FRAGMENT_WIDTH*SAMPLE_WIDTH)
@@ -92,13 +115,11 @@ struct packette_raw {
 //
 // XXX This is the format of the final written file
 //
+
 struct packette_processed {
 
-  struct header header;
-
-  // XXX Convenience quantities
-  unsigned char active_channels;
-  char channel_map[NUM_CHANNELS];
+  struct header header;                      // 
+  unsigned long channel_map[NUM_CHANNELS];
 		   
   // Here be dragons
   struct channel_block data[0];  

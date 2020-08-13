@@ -86,7 +86,7 @@ struct channel {
   // first 2 bytes of the packed downstream[8].
   //
   union {
-    unsigned short num_samples;
+    unsigned short num_samples;  // This is the ROI width, it can change at the channel level
     unsigned char downstream[8];
   } header;
 

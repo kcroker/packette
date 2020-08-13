@@ -12,8 +12,8 @@
 // Used for writing 8 bytes of no data quickly
 #define NO_DATA_FLAG_4X 0x0004000400040004
 
-// Maximum payload size (in bytes)
-#define MAX_PAYLOAD 1024
+// Maximum fragment size (in samples)
+#define MAX_FRAGMENT_WIDTH 512
 
 // How many bytes per sample (2 for 12 bit ADC)
 #define SAMPLE_WIDTH 2
@@ -49,7 +49,14 @@ struct header {
   // 2 bytes: trigger time low
   // 2 bytes: RESERVED
   //
-  unsigned char downstream[8];  // Block of packed data for later use
+  // This lets us keep an 8 byte alignment, and also
+  // immediate rip out the eventnumber from the first 2 bytes
+  // of the packed downstream[8].
+  //
+  union {
+    unsigned short eventnum;      
+    unsigned char downstream[8];  // Block of packed data for later use
+  } event;
   
   unsigned long seqnum;         // This now monotonically increases across events and individual fragmented packets.
   unsigned long channel_mask;   // Dyanmical: which channels were on in this event
@@ -72,6 +79,8 @@ struct packette_raw {
   struct header header;        // 32 bytes
   struct channel_block data;   // 16 bytes + roi_width*SAMPLE_WIDTH
 };
+
+#define BUFSIZE (sizeof(struct packette_raw) + MAX_FRAGMENT_WIDTH*SAMPLE_WIDTH)
 
 ////////////////////// CONSTRAINTS ////////////////////////
 //

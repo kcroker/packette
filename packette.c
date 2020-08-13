@@ -26,9 +26,7 @@
 
 // Note that things are unsigned long because we want to avoid implicit casts
 // during computation.
-void (*process_packet_fptr)(struct packette_raw *p);
-unsigned long active_channels;
-unsigned char channel_map[NUM_CHANNELS];
+void (*process_packets_fptr)(void *buf, int vlen);
 unsigned long fragments_per_channel;
 unsigned long current_evt_seqnum;
 
@@ -41,7 +39,7 @@ volatile sig_atomic_t interrupt_flag = 0;
 // Build channel map.  Returns the number of active channels
 // Assumes channel map has been initialized.
 //
-unsigned long buildChannelMap(unsigned long mask) {
+unsigned long buildChannelMap(unsigned long mask, unsigned char *channel_map) {
 
   unsigned long active = 0;
   unsigned char i = 0;
@@ -62,8 +60,73 @@ unsigned long buildChannelMap(unsigned long mask) {
 // Everytime we push to the stream
 //
 
-void process_packet(struct packette_raw *p) { 
+void process_packets(void *buf, int vlen) { 
 
+  //
+  // The essential points to reconstruction are that:
+  // 1) the sequence number increases monotonically from 0.
+  // 2) roi_width tells us how much data we have
+  // 3) channel mask lets us know how many payloads to expect
+  // 4) event number lets us know if we've changed events
+  //
+
+  //
+  // The simplest implementation is to write a no-data 
+  // block of the correct size.  Then fill it in.
+  //
+  // This can later be optimized to either.  Fuck it.
+  // Do it the fast way.  From the start.
+  //
+
+  struct packette_raw *ptr;
+  unsigned long prev_seqnum;
+  unsigned long delta;
+  unsigned short prev_eventnum;
+  unsigned char activeChannels;
+  unsigned char channelMap;
+
+  while(vlen--) {
+
+    // Get the first one, casting it so we can extract the fields
+    ptr = (struct packette_raw *)buf;
+
+    // How many packets did we drop/lose?
+    delta = ptr->header.seqnum - prev_seqnum;
+    
+    // Are we on the same event?
+    if(ptr->header.event.eventnum == prev_eventnum) {
+
+    }
+    else {
+
+      // Recompute the number of active channels
+      
+    }
+    
+    // Stash these for the next packet
+    prev_seqnum = ptr->header.seqnum;
+    prev_eventnum = ptr->header.event.eventnum;
+
+    // Get the next one (the buffer is contiguous)
+    buf += BUFSIZE;
+  }
+
+    
+  
+  // 
+  //
+  // There are two situations to consider
+  //
+
+    // This lets us fill in gaps in the outgoing stream
+  //
+  // Currently, this only supports one ROI per channel per
+  // hit
+  //
+  // I do need an event number
+  //
+  
+  
 /*   // If we exceeded the boundary for the next event? */
 /*   next_event_seqnum = current_event_seqnum + (active_channels * fragments_per_channel); */
 
@@ -93,43 +156,22 @@ void process_packet(struct packette_raw *p) {
 //
 // Perform initialization based on the first packet received
 //
-void preprocess_first_packet(struct packette_raw *p) {
+void preprocess_first_packet(void *p, int vlen) {
 
   unsigned long mask;
   unsigned char i;
   
-  // Build the channel map, compute the number of active channels
-  active_channels = buildChannelMap(p->header.channel_mask);
-  
-  // Compute the fragments per channel
-  //
-  // Standard idiom for positive integers:
-  // https://stackoverflow.com/questions/2422712/rounding-integer-division-instead-of-truncating
-  //
-  // AAA (assuming that there is only one ROI region per channel)
-  fragments_per_channel = (p->header.roi_width * SAMPLE_WIDTH + (MAX_PAYLOAD - 1)) / MAX_PAYLOAD;
-  
-  // Allocate the placeholder block
-  if (! (emptyBlock = (unsigned long *) malloc(p->header.roi_width))) {
-    exit(4);
-  }
-
-  // Assign once, decrement once
-  for(i = (p->header.roi_width >> 3); i > 0;)
-    emptyBlock[--i] = NO_DATA_FLAG_4X;
-
   // Set the process function to subsequent packets
   // (this way we avoid an if every time to see if we are first)
-  process_packet_fptr = &process_packet;
+  process_packets_fptr = &process_packets;
 
   // Process this first packet!
-  (*process_packet_fptr)(p);
+  (*process_packets_fptr)(p, vlen);
 }
 
 //
 // Called when the child receives SIGINT
 //
-
 void flushChild(int signum) {
 
   // This is a special volatile signal-safe integer type:
@@ -146,13 +188,12 @@ int main(int argc, char **argv) {
   int sockfd, retval, i;
   struct sockaddr_in sa;
   struct timespec timeout;
-  unsigned int bufsize;
   unsigned int vlen;
   
   // recvmmsg() stuff
   struct mmsghdr *msgs;
   struct iovec *iovecs;
-  void **bufs;
+  void *buf;
   
   // Multiprocessing stuff
   pid_t pid;
@@ -233,19 +274,10 @@ int main(int argc, char **argv) {
   ///////////////// PARSING COMPLETE ///////////////////
   
   // Set the initial packet processing pointer to the preprocessor
-  process_packet_fptr = &preprocess_first_packet;
-
-  // Initialize the channel map
-  for(i = 0; i < NUM_CHANNELS; ++i)
-    channel_map[i] = -1;
-
-  // Since we want to do recvmmsg() but we don't know the roi_width
-  // We can intake a first packet normally and extract it, but that's hella awkward
-  // So for now just take it from the command line
-  bufsize = sizeof(struct packette_raw) + roi_width*SAMPLE_WIDTH;
+  process_packets_fptr = &preprocess_first_packet;
 
   // Now compute the optimal vlen via truncated idiv
-  vlen = L2_CACHE / bufsize;
+  vlen = L2_CACHE / BUFSIZE;
   fprintf(stderr,
 	  "Packette (parent): Determined %d packets will saturate L2 cache of %d bytes\n",
 	  vlen,
@@ -258,7 +290,7 @@ int main(int argc, char **argv) {
   pid = 1;
   if( ! (kids = (pid_t *)malloc(sizeof(pid_t) * children))) {
     perror("malloc()");
-    exit(-46);
+    exit(EXIT_FAILURE);
   }
   
   ////////////////////// SPAWNING ////////////////////
@@ -357,36 +389,28 @@ int main(int argc, char **argv) {
     retval =
       (msgs = (struct mmsghdr *)malloc( sizeof(struct mmsghdr) * vlen)) &&
       (iovecs = (struct iovec *)malloc( sizeof(struct iovec) * vlen)) &&
-      (bufs = malloc( sizeof(void *) * vlen));
+      (buf = malloc(BUFSIZE * vlen));
     
     if (!retval) {
       perror("malloc()");
       exit(EXIT_FAILURE);
     }
-
-    // Allocate buffers sufficient to receive expected packets
-    for(i = 0; i < vlen; ++i) {
-      if( ! (bufs[i] = (struct packette_raw *)malloc(bufsize))) {
-	perror("malloc()");
-	exit(EXIT_FAILURE);
-      }
-    }
-
+    
     // Report success.
     fprintf(stderr,
 	    "Packette (PID %d): Allocated %d bytes for direct socket transfer of %d packets.\n",
 	    pid,
-	    bufsize * vlen,
+	    BUFSIZE * vlen,
 	    vlen);
     
     // Now we do the magic.
     // We read in directly to payload buffers
     memset(msgs, 0, sizeof(struct mmsghdr) * vlen);
-
+    
     // Set this up to directly transfer payloads
     for (i = 0; i < vlen; i++) {
-      iovecs[i].iov_base         = bufs[i];
-      iovecs[i].iov_len          = bufsize;
+      iovecs[i].iov_base         = buf + i*(BUFSIZE);         // This should be a correctly operating pointer arithmetic...
+      iovecs[i].iov_len          = BUFSIZE;
       msgs[i].msg_hdr.msg_iov    = &iovecs[i];
       msgs[i].msg_hdr.msg_iovlen = 1;
     }
@@ -403,7 +427,8 @@ int main(int argc, char **argv) {
     	perror("recvmmsg()");
 
       // Process the packets
-      
+      (*process_packets_fptr)(buf, vlen);
+	
       // Check for a Ctrl+C interrupt
       if(interrupt_flag) {
 
@@ -426,11 +451,9 @@ int main(int argc, char **argv) {
     fclose(orphan_file);
     
     // Free the scatter-gather buffers
-    for(i = 0; i < vlen; ++i)
-      free(bufs[i]);
+    free(buf);
 
     // Free the message structures themselves
-    free(bufs);
     free(iovecs);
     free(msgs);
 

@@ -30,77 +30,32 @@
 // This is a separate thing.
 //
 
-// 
-// Spaketh the greybeard ESR:
-//
-// "The riskiest form of packing is to use unions. If you know that certain fields in your structure are never used in combination with certain other fields, consider using a union to make them share storage. But be extra careful and verify your work with regression testing, because if your lifetime analysis is even slightly wrong you will get bugs ranging from crashes to (much worse) subtle data corruption."
-//
-//    http://www.catb.org/esr/structure-packing/
-//
-// Justification:
-//   We use unions because we don't need all the values *at the same time*.
-//   Later processing steps can grab or cast specific offsets of the buffer.
-//
+//////////////////////// PACKETTE TRANSPORT PROTOCOL BEGIN ////////////////////////////
 
-//
-// These quantities are only needed during assembly and are discarded  
-//
+// NOTE:
+// The structures are separate for packing and reuse in the storage protocol
+
 // 16 bytes
 struct assembly {
-  
-  //
-  // 2 bytes: relative sample offset (used during assembly)
-  // 6 bytes: board MAC address (magic)
-  //
-  // This lets us keep an 8 byte alignment, and also
-  // immediate rip out what we need for assembly in the first 2 bytes
-  // of the packed downstream[8].
-  //
-  union {
-    unsigned short rel_offset;    // Relative sample offset, for writng during assembly
-    unsigned char downstream[8];  
-  } header;
-  
-  unsigned long seqnum;           // This now monotonically increases across events and individual fragmented packets.
+  unsigned char board_id[6];     // 6 bytes: board MAC address (magic)
+  unsigned short rel_offset;     // 2 bytes: Sample offset (relative to DRS4_STOP)
+  unsigned long seqnum;          // 8 bytes: monotonically increases for each packet!!
 };
 
 // 16 bytes
 struct header {
-
-  //
-  // 2 bytes: event number (used during assembly)
-  // 4 bytes: trigger time low
-  // 2 bytes: RESERVED
-  //
-  // This lets us keep an 8 byte alignment, and also
-  // immediate rip out the eventnumber from the first 2 bytes
-  // of the packed downstream[8].
-  //
-  union {
-    unsigned short eventnum;      
-    unsigned char downstream[8]; // Block of packed data for later use
-  } event;
-  
-  unsigned long channel_mask;    // Dyanmical: which channels were on in this event
+  unsigned short event_num;      // 4 bytes: event number (used during assembly)
+  unsigned int trigger_low;      // 4 bytes: trigger time low
+  unsigned long channel_mask;    // 8 bytes: channels present in this event
 };
 
 // 8 bytes + length
 struct channel {
 
-  //
-  // 2 bytes: The number of samples (used during assembly)
-  // 1 byte:  This is the device channel
-  // 2 bytes: This is where the sampling stopped.  Sits here because there are many DRS4s.
-  // 3 bytes: RESERVED 
-  //
-  // This lets us keep an 8 byte alignment, and also
-  // immediately rip out the number of samples from the
-  // first 2 bytes of the packed downstream[8].
-  //
-  union {
-    unsigned short num_samples;  // This is the ROI width, it can change at the channel level
-    unsigned char downstream[8];
-  } header;
+  unsigned char reserved[3];     // 3 bytes: 0x00 0x00 0x00 (at the top for alignment)
+  unsigned char channel;         // 1 byte:  Channel identifier
+  unsigned short num_samples;    // 2 bytes: Total number of samples across all fragments 
+  unsigned short drs4_stop;      // 2 bytes: DRS4_STOP value
 
   unsigned short samples[0];     // 0 length.  Casted pointer to the first sample
 };
@@ -112,34 +67,20 @@ struct channel {
 // 40 byte header - x86 64bit cache line is 64 bytes, so we fit.
 //
 struct packette_transport {
-  struct assembly assembly;    // 16 bytes
-  struct header header;        // 16 bytes
-  struct channel channel;      // 8 bytes + (variable)roi_width*SAMPLE_WIDTH
+  struct assembly assembly;      // 16 bytes
+  struct header header;          // 16 bytes
+  struct channel channel;        // 8 bytes + (variable)roi_width*SAMPLE_WIDTH
 };
 
-#define BUFSIZE (sizeof(struct packette_raw) + MAX_FRAGMENT_WIDTH*SAMPLE_WIDTH)
+//////////////////////// PACKETTE TRANSPORT PROTOCOL END ////////////////////////////
+
+#define BUFSIZE (sizeof(struct packette_transport) + MAX_FRAGMENT_WIDTH*SAMPLE_WIDTH)
 
 ////////////////////// CONSTRAINTS ////////////////////////
 //
 //    roi_width * SAMPLE_WIDTH must be a multiple of 8
 //
 //
-
-
-//
-// XXX This is the format of the final written file
-//
-
-struct packette_processed {
-
-  struct header header;                      // 
-  unsigned long channel_map[NUM_CHANNELS];
-		   
-  // Here be dragons
-  struct channel_block data[0];  
-};
-
-// 
 // MACROS
 // XXX (these are probably broken right now)
  

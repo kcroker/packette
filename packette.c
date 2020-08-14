@@ -22,11 +22,13 @@
 // Local stuff
 #include "packette.h"
 
+#define DEBUG
+
 ///////////////////////////// GLOBALS /////////////////////////
 
 // Note that things are unsigned long because we want to avoid implicit casts
 // during computation.
-void (*process_packets_fptr)(void *buf, int vlen);
+void (*process_packets_fptr)(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file);
 unsigned long fragments_per_channel;
 unsigned long current_evt_seqnum;
 
@@ -60,113 +62,87 @@ unsigned long buildChannelMap(unsigned long mask, unsigned char *channel_map) {
 // Everytime we push to the stream
 //
 
-void process_packets(void *buf, int vlen) { 
+//
+// PACKET PROCESSORS
+//
+void super_nop_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
   //
-  // The essential points to reconstruction are that:
-  // 1) the sequence number increases monotonically from 0.
-  // 2) roi_width tells us how much data we have
-  // 3) channel mask lets us know how many payloads to expect
-  // 4) event number lets us know if we've changed events
+  // Writes the entire message buffer at once, including deadspace not necessarily
+  // consumed by the packets.
   //
+  fwrite(buf,
+	 BUFSIZE,
+	 vlen,
+	 ordered_file);
+}
 
-  //
-  // The simplest implementation is to write a no-data 
-  // block of the correct size.  Then fill it in.
-  //
-  // This can later be optimized to either.  Fuck it.
-  // Do it the fast way.  From the start.
-  //
+void nop_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
-  struct packette_raw *ptr;
-  unsigned long prev_seqnum;
-  unsigned long delta;
-  unsigned short prev_eventnum;
-  unsigned char activeChannels;
-  unsigned char channelMap;
-
+  struct packette_transport *ptr;
+  
+  //
+  // This does nothing but write packet headers and payloads to the ordered file.
+  // (This removes buffer garbage)
+  //
   while(vlen--) {
 
     // Get the first one, casting it so we can extract the fields
-    ptr = (struct packette_raw *)buf;
+    ptr = (struct packette_transport *)buf;
 
-    // How many packets did we drop/lose?
-    delta = ptr->header.seqnum - prev_seqnum;
-    
-    // Are we on the same event?
-    if(ptr->header.event.eventnum == prev_eventnum) {
+    // Blast
+    fwrite(buf,
+	   sizeof(struct packette_transport) + ptr->channel.num_samples * SAMPLE_WIDTH,
+	   1,
+	   ordered_file);
 
-    }
-    else {
-
-      // Recompute the number of active channels
-      
-    }
-    
-    // Stash these for the next packet
-    prev_seqnum = ptr->header.seqnum;
-    prev_eventnum = ptr->header.event.eventnum;
-
-    // Get the next one (the buffer is contiguous)
+    // Get the next one
     buf += BUFSIZE;
   }
+}
 
+void debug_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file) {
+
+  struct packette_transport *ptr;
+  
+  //
+  // This outputs the headers that come in off the pipe
+  //
+  char *output =
+    "Packette Transport Header:\n"
+    "---------------------------\n"
+    "Board id:\t\t\t%x%x%x%x%x%x\n"
+    "Relative offset:\t\t%d\n"
+    "Sequence number:\t\t%d\n"
+    "Event number:\t\t\t%d\n"
+    "Trigger timestamp (low):\t%d\n"
+    "Channel mask:\t\t\t%x\n"
+    "Channel number:\t\t\t%d\n"
+    "Total samples (all fragments):\t%d\n"
+    "DRS4 stop:\t\t\t%d\n\n";
+  
+  while(vlen--) {
+
+    // Get the first one, casting it so we can extract the fields
+    ptr = (struct packette_transport *)buf;
+
+    fprintf(ordered_file,
+	    output,
+	    ptr->assembly.board_id[0], ptr->assembly.board_id[1],
+	    ptr->assembly.board_id[2], ptr->assembly.board_id[3],
+	    ptr->assembly.board_id[4], ptr->assembly.board_id[5],
+	    ptr->assembly.rel_offset,
+	    ptr->assembly.seqnum,
+	    ptr->header.event_num,
+	    ptr->header.trigger_low,
+	    ptr->header.channel_mask,
+	    ptr->channel.channel,
+	    ptr->channel.num_samples,
+	    ptr->channel.drs4_stop);
     
-  
-  // 
-  //
-  // There are two situations to consider
-  //
-
-    // This lets us fill in gaps in the outgoing stream
-  //
-  // Currently, this only supports one ROI per channel per
-  // hit
-  //
-  // I do need an event number
-  //
-  
-  
-/*   // If we exceeded the boundary for the next event? */
-/*   next_event_seqnum = current_event_seqnum + (active_channels * fragments_per_channel); */
-
-/*   // Do we ship? */
-/*   if(p->seqnum >= next_event_seqnum) { */
-
-/*     // Oh yeah, we ship */
-/*     flushAndResetBuffer(); */
-/*   } */
-  
-/*   // Check for out of ordering */
-/*   delta = p->seqnum - prev_seqnum; */
-/*   if(delta < 0) { */
-
-/*     // Output this onto the jumbled stream for Stage II */
-/*     stashJumbled(p); */
-
-/*     // Write placeholder block of the correct length */
-/*   } */
-/* } */
-
-/* void cleanup(void) { */
-
-/*   free(emptyBlock); */
-} 
-
-//
-// Perform initialization based on the first packet received
-//
-void preprocess_first_packet(void *p, int vlen) {
-
-  unsigned long mask;
-  unsigned char i;
-  
-  // Set the process function to subsequent packets
-  // (this way we avoid an if every time to see if we are first)
-  process_packets_fptr = &process_packets;
-
-  // Process this first packet!
-  (*process_packets_fptr)(p, vlen);
+    // Get the next one
+    buf += BUFSIZE;
+  }
 }
 
 //
@@ -183,7 +159,7 @@ void flushChild(int signum) {
 #define TIMEOUT 1
 
 int main(int argc, char **argv) {
-  
+
   // Socket stuff
   int sockfd, retval, i;
   struct sockaddr_in sa;
@@ -204,8 +180,6 @@ int main(int argc, char **argv) {
   int flags, opt;
   int nsecs, tfnd;
   unsigned short port;
-  unsigned long roi_width;
-  unsigned long max_packets;
   char *addr_str;
 
   // Signal handling stuff
@@ -218,17 +192,17 @@ int main(int argc, char **argv) {
   time_t secs;
   char tmp1[1024], tmp2[1024];
   
-  // lol basic shit in C is annoying.
+  // lol "basic" shit in C is annoying.
   // Default values
   port = 1338;
-  roi_width = 1024;
   children = 1;
   addr_str = 0x0;
-  max_packets = ~0;
+  tmp1[0] = 0x0;
+  ordered_file = 0x0;
   
   /////////////////// ARGUMENT PARSING //////////////////
   
-  while ((opt = getopt(argc, argv, "t:p:w:m:")) != -1) {
+  while ((opt = getopt(argc, argv, "t:p:n:o")) != -1) {
     switch (opt) {
     case 't':
       children = atoi(optarg);
@@ -236,17 +210,28 @@ int main(int argc, char **argv) {
     case 'p':
       port = atoi(optarg);
       break;
-    case 'w':
-      roi_width = atoi(optarg);
+    case 'n':
+      strncpy(tmp1, optarg, 1024); 
       break;
-    case 'm':
-      max_packets = strtoul(optarg, NULL, 10);
+    case 'o':
+      ordered_file = stdout;
       break;
     default: /* '?' */
-      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-w samples per ROI] [-m max packets per thread] BIND_ADDRESS\n",
+      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-n output file prefix] [-o dump to standard out] BIND_ADDRESS\n",
 	      argv[0]);
       exit(EXIT_FAILURE);
     }
+  }
+
+  // Sanity check
+  if(ordered_file) {
+
+    if(children > 1) {
+      fprintf(stderr, "ERROR: Multiprocess dump to stdout is stupid.\n");
+      exit(EXIT_FAILURE);
+    }
+    
+    fprintf(stderr, "Packette (parent): dumping to stdout...\n");
   }
 
   // Now grab mandatory positional arguments
@@ -274,7 +259,7 @@ int main(int argc, char **argv) {
   ///////////////// PARSING COMPLETE ///////////////////
   
   // Set the initial packet processing pointer to the preprocessor
-  process_packets_fptr = &preprocess_first_packet;
+  process_packets_fptr = &debug_processor;
 
   // Now compute the optimal vlen via truncated idiv
   vlen = L2_CACHE / BUFSIZE;
@@ -292,6 +277,18 @@ int main(int argc, char **argv) {
     perror("malloc()");
     exit(EXIT_FAILURE);
   }
+
+  // Make the filename
+  //
+  // (YIKES We had to use the _r call here, due to "thread safety"
+  //  I guess threads is more than just pthreads, but its also processes!)
+  if(tmp1[0] == 0x0) {
+    secs = time(NULL);
+    localtime_r(&secs, &lt);
+    strftime(tmp1, 1024, "%Y-%m-%d_%H-%M-%S", &lt);
+  }
+
+  fprintf(stderr, "Packette (parent): Using output prefix '%s'\n", tmp1);
   
   ////////////////////// SPAWNING ////////////////////
   
@@ -331,22 +328,17 @@ int main(int argc, char **argv) {
 
     ////////////////// STREAMS //////////////////
     
-    // Make the filename
-    //
-    // (YIKES We had to use the _r call here, due to "thread safety"
-    //  I guess threads is more than just pthreads, but its also processes!)
-    secs = time(NULL);
-    localtime_r(&secs, &lt);
-    
-    strftime(tmp1, 1024, "%Y-%m-%d_%H-%M-%S", &lt);
-    sprintf(tmp2, "%s_%s_%d.ordered", tmp1, addr_str, port);
     	    
     // Open streams for output
-    if( ! (ordered_file = fopen(tmp2, "wb"))) {
-      perror("fopen()");
-      exit(EXIT_FAILURE);
+    if(!ordered_file) {
+      
+      sprintf(tmp2, "%s_%s_%d.ordered", tmp1, addr_str, port);
+      if( ! (ordered_file = fopen(tmp2, "wb"))) {
+	perror("fopen()");
+	exit(EXIT_FAILURE);
+      }
     }
-
+    
     sprintf(tmp2, "%s_%s_%d.orphans", tmp1, addr_str, port);
     
     // Open streams for output
@@ -368,7 +360,7 @@ int main(int argc, char **argv) {
     // Get the given IP and port from strings
     // Set the port (truncate, base 10, ignore bs characters)
     // XXX Don't check for errors ;)
-    sa.sin_port = port + k - 1;
+    sa.sin_port = htons(port + k - 1);
     sa.sin_family = AF_INET;
 
     // Why does this always have an explicit cast in the examples?
@@ -383,7 +375,7 @@ int main(int argc, char **argv) {
 	    "Packette (PID %d): Listening at %s:%d...\n",
 	    pid,
 	    addr_str,
-	    sa.sin_port);
+	    port);
         
     // Now need to allocate the message structures
     retval =
@@ -422,28 +414,37 @@ int main(int argc, char **argv) {
     // Pull as many as will fit in L2 cache on your platform
     while(1) {
 
+      // Try to grab at most vlen packets, timing out after TIMEOUT
       retval = recvmmsg(sockfd, msgs, vlen, 0, &timeout);
-      if (retval == -1)
-    	perror("recvmmsg()");
 
-      // Process the packets
-      (*process_packets_fptr)(buf, vlen);
-	
-      // Check for a Ctrl+C interrupt
-      if(interrupt_flag) {
-
-	// Someone pressed Ctrl+C
-	fprintf(stderr,
-		"Packette (PID %d): Received SIGINT, finishing up...\n",
-		pid);
-	break;
-      }
+#ifdef DEBUG
+      fprintf(stderr,
+	      "Packette (PID %d): Received %d packets.\n",
+	      pid,
+	      retval);
+#endif
       
-      /* printf("%d messages received\n", retval); */
-      /* for (i = 0; i < retval; i++) { */
-      /* 	bufs[i][msgs[i].msg_len] = 0; */
-      /* 	printf("%d %s", i+1, bufs[i]); */
-      /* } */
+      // Process only the packets received
+      if (retval > 0)
+	(*process_packets_fptr)(buf, retval, ordered_file, orphan_file);
+      else {
+
+	// If there was trouble, see if there was an interrupt
+	if (retval == -1) {
+	  perror("recvmmsg()");
+
+	  // Check for a Ctrl+C interrupt
+	  // Only check the volatile if the socket read got disrupted
+	  if(interrupt_flag) {
+	    
+	    // Someone pressed Ctrl+C
+	    fprintf(stderr,
+		    "Packette (PID %d): Received SIGINT, finishing up...\n",
+		    pid);
+	    break;
+	  }
+	}
+      }
     }
 
     // Close the file descriptors

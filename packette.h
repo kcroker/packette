@@ -44,7 +44,7 @@ struct assembly {
 
 // 16 bytes
 struct header {
-  unsigned short event_num;      // 4 bytes: event number (used during assembly)
+  unsigned int event_num;      // 4 bytes: event number (used during assembly)
   unsigned int trigger_low;      // 4 bytes: trigger time low
   unsigned long channel_mask;    // 8 bytes: channels present in this event
 };

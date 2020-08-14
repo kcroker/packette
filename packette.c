@@ -110,15 +110,15 @@ void debug_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file)
     "Packette Transport Header:\n"
     "---------------------------\n"
     "Board id:\t\t\t%.2x:%.2x:%.2x:%.2x:%.2x:%.2x\n"
-    "Relative offset:\t\t%d\n"
-    "Sequence number:\t\t%d\n"
-    "Event number:\t\t\t%d\n"
-    "Trigger timestamp (low):\t%d\n"
-    "Channel mask:\t\t\t%x\n"
+    "Relative offset:\t\t%u\n"
+    "Sequence number:\t\t%lu\n"
+    "Event number:\t\t\t%u\n"
+    "Trigger timestamp (low):\t%u\n"
+    "Channel mask:\t\t\t%.2x %.2x %.2x %.2x %.2x %.2x %.2x %.2x\n"
     "RESERVED:\t\t\t0x%.2x 0x%.2x 0x%.2x\n"
-    "Channel number:\t\t\t%d\n"
-    "Total samples (all fragments):\t%d\n"
-    "DRS4 stop:\t\t\t%d\n\n";
+    "Channel number:\t\t\t%u\n"
+    "Total samples (all fragments):\t%u\n"
+    "DRS4 stop:\t\t\t%u\n\n";
   
   while(vlen--) {
 
@@ -134,7 +134,10 @@ void debug_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file)
 	    ptr->assembly.seqnum,
 	    ptr->header.event_num,
 	    ptr->header.trigger_low,
-	    ptr->header.channel_mask,
+	    ((unsigned char *)&(ptr->header.channel_mask))[7], ((unsigned char *)&(ptr->header.channel_mask))[6],
+	    ((unsigned char *)&(ptr->header.channel_mask))[5], ((unsigned char *)&(ptr->header.channel_mask))[4],
+	    ((unsigned char *)&(ptr->header.channel_mask))[3], ((unsigned char *)&(ptr->header.channel_mask))[2],
+	    ((unsigned char *)&(ptr->header.channel_mask))[1], ((unsigned char *)&(ptr->header.channel_mask))[0],
 	    ptr->channel.reserved[0], ptr->channel.reserved[1], ptr->channel.reserved[2],
 	    ptr->channel.channel,
 	    ptr->channel.num_samples,

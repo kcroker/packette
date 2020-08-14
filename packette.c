@@ -29,8 +29,6 @@
 // Note that things are unsigned long because we want to avoid implicit casts
 // during computation.
 void (*process_packets_fptr)(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file);
-unsigned long fragments_per_channel;
-unsigned long current_evt_seqnum;
 
 unsigned long *emptyBlock;
 
@@ -111,12 +109,13 @@ void debug_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file)
   char *output =
     "Packette Transport Header:\n"
     "---------------------------\n"
-    "Board id:\t\t\t%x%x%x%x%x%x\n"
+    "Board id:\t\t\t%.2x:%.2x:%.2x:%.2x:%.2x:%.2x\n"
     "Relative offset:\t\t%d\n"
     "Sequence number:\t\t%d\n"
     "Event number:\t\t\t%d\n"
     "Trigger timestamp (low):\t%d\n"
     "Channel mask:\t\t\t%x\n"
+    "RESERVED:\t\t\t0x%.2x 0x%.2x 0x%.2x\n"
     "Channel number:\t\t\t%d\n"
     "Total samples (all fragments):\t%d\n"
     "DRS4 stop:\t\t\t%d\n\n";
@@ -136,6 +135,7 @@ void debug_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file)
 	    ptr->header.event_num,
 	    ptr->header.trigger_low,
 	    ptr->header.channel_mask,
+	    ptr->channel.reserved[0], ptr->channel.reserved[1], ptr->channel.reserved[2],
 	    ptr->channel.channel,
 	    ptr->channel.num_samples,
 	    ptr->channel.drs4_stop);
@@ -270,7 +270,8 @@ int main(int argc, char **argv) {
   
   //
   // No IPC is required between children
-  // but we want the parent to receive the Ctrl+C and clean up the children.
+  // but we want the children to receive the Ctrl+C and clean themselves up
+  // before the parent goes away.
   //
   pid = 1;
   if( ! (kids = (pid_t *)malloc(sizeof(pid_t) * children))) {
@@ -278,10 +279,7 @@ int main(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
 
-  // Make the filename
-  //
-  // (YIKES We had to use the _r call here, due to "thread safety"
-  //  I guess threads is more than just pthreads, but its also processes!)
+  // Make the filename?
   if(tmp1[0] == 0x0) {
     secs = time(NULL);
     localtime_r(&secs, &lt);
@@ -357,9 +355,7 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
 
-    // Get the given IP and port from strings
-    // Set the port (truncate, base 10, ignore bs characters)
-    // XXX Don't check for errors ;)
+    // Set the port with proper endianness
     sa.sin_port = htons(port + k - 1);
     sa.sin_family = AF_INET;
 

@@ -38,15 +38,15 @@
 // 16 bytes
 struct assembly {
   unsigned char board_id[6];     // 6 bytes: board MAC address (magic)
-  unsigned short rel_offset;     // 2 bytes: Sample offset (relative to DRS4_STOP)
-  unsigned long seqnum;          // 8 bytes: monotonically increases for each packet!!
+  uint16_t rel_offset;     // 2 bytes: Sample offset (relative to DRS4_STOP)
+  uint64_t seqnum;          // 8 bytes: monotonically increases for each packet!!
 };
 
 // 16 bytes
 struct header {
-  unsigned int event_num;      // 4 bytes: event number (used during assembly)
-  unsigned int trigger_low;      // 4 bytes: trigger time low
-  unsigned long channel_mask;    // 8 bytes: channels present in this event
+  uint32_t event_num;      // 4 bytes: event number (used during assembly)
+  uint32_t trigger_low;      // 4 bytes: trigger time low
+  uint64_t channel_mask;    // 8 bytes: channels present in this event
 };
 
 // 8 bytes + length
@@ -54,10 +54,10 @@ struct channel {
 
   unsigned char reserved[3];     // 3 bytes: 0x00 0x00 0x00 (at the top for alignment)
   unsigned char channel;         // 1 byte:  Channel identifier
-  unsigned short num_samples;    // 2 bytes: Total number of samples across all fragments 
-  unsigned short drs4_stop;      // 2 bytes: DRS4_STOP value
+  uint16_t num_samples;    // 2 bytes: Total number of samples across all fragments 
+  uint16_t drs4_stop;      // 2 bytes: DRS4_STOP value
 
-  unsigned short samples[0];     // 0 length.  Casted pointer to the first sample
+  uint16_t samples[0];     // 0 length.  Casted pointer to the first sample
 };
 
 //

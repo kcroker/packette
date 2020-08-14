@@ -28,7 +28,11 @@
 
 // Note that things are unsigned long because we want to avoid implicit casts
 // during computation.
-void (*process_packets_fptr)(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file);
+void (*process_packets_fptr)(void *buf,
+			     struct mmsghdr *msgs,
+			     int vlen,
+			     FILE *ordered_file,
+			     FILE *orphan_file);
 
 unsigned long *emptyBlock;
 
@@ -63,7 +67,7 @@ unsigned long buildChannelMap(unsigned long mask, unsigned char *channel_map) {
 //
 // PACKET PROCESSORS
 //
-void super_nop_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file) {
+void super_nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
   //
   // Writes the entire message buffer at once, including deadspace not necessarily
@@ -75,7 +79,7 @@ void super_nop_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_f
 	 ordered_file);
 }
 
-void nop_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file) {
+void nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
   struct packette_transport *ptr;
   
@@ -99,9 +103,10 @@ void nop_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file) {
   }
 }
 
-void debug_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file) {
+void debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
   struct packette_transport *ptr;
+  unsigned int i;
   
   //
   // This outputs the headers that come in off the pipe
@@ -118,8 +123,10 @@ void debug_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file)
     "RESERVED:\t\t\t0x%.2x 0x%.2x 0x%.2x\n"
     "Channel number:\t\t\t%u\n"
     "Total samples (all fragments):\t%u\n"
-    "DRS4 stop:\t\t\t%u\n\n";
-  
+    "DRS4 stop:\t\t\t%u\n"
+    "--------- COMPUTED ---------\n"
+    "Payload length (bytes):\t%u\n\n";
+  i = 0;
   while(vlen--) {
 
     // Get the first one, casting it so we can extract the fields
@@ -134,17 +141,23 @@ void debug_processor(void *buf, int vlen, FILE *ordered_file, FILE *orphan_file)
 	    ptr->assembly.seqnum,
 	    ptr->header.event_num,
 	    ptr->header.trigger_low,
-	    ((unsigned char *)&(ptr->header.channel_mask))[7], ((unsigned char *)&(ptr->header.channel_mask))[6],
-	    ((unsigned char *)&(ptr->header.channel_mask))[5], ((unsigned char *)&(ptr->header.channel_mask))[4],
-	    ((unsigned char *)&(ptr->header.channel_mask))[3], ((unsigned char *)&(ptr->header.channel_mask))[2],
-	    ((unsigned char *)&(ptr->header.channel_mask))[1], ((unsigned char *)&(ptr->header.channel_mask))[0],
+	    ((unsigned char *)&(ptr->header.channel_mask))[7],
+	    ((unsigned char *)&(ptr->header.channel_mask))[6],
+	    ((unsigned char *)&(ptr->header.channel_mask))[5],
+	    ((unsigned char *)&(ptr->header.channel_mask))[4],
+	    ((unsigned char *)&(ptr->header.channel_mask))[3],
+	    ((unsigned char *)&(ptr->header.channel_mask))[2],
+	    ((unsigned char *)&(ptr->header.channel_mask))[1],
+	    ((unsigned char *)&(ptr->header.channel_mask))[0],
 	    ptr->channel.reserved[0], ptr->channel.reserved[1], ptr->channel.reserved[2],
 	    ptr->channel.channel,
 	    ptr->channel.num_samples,
-	    ptr->channel.drs4_stop);
+	    ptr->channel.drs4_stop,
+	    msgs[i].msg_len - sizeof(struct packette_transport));
     
     // Get the next one
     buf += BUFSIZE;
+    ++i;
   }
 }
 
@@ -425,7 +438,7 @@ int main(int argc, char **argv) {
       
       // Process only the packets received
       if (retval > 0)
-	(*process_packets_fptr)(buf, retval, ordered_file, orphan_file);
+	(*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file);
       else {
 
 	// If there was trouble, see if there was an interrupt

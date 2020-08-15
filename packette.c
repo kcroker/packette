@@ -1,5 +1,8 @@
 #define _GNU_SOURCE
 
+// Linux process scheduling
+#include <sched.h>
+
 // Sockets
 #include <netinet/ip.h>
 #include <stdio.h>
@@ -195,6 +198,9 @@ int main(int argc, char **argv) {
   pid_t *kids;  
   unsigned char children, k;
 
+  // Processor pinning stuff
+  cpu_set_t  mask;
+
   // Argument parsing stuff
   int flags, opt;
   int nsecs, tfnd;
@@ -332,6 +338,20 @@ int main(int argc, char **argv) {
     // What is our purpose?
     pid = getpid();
 
+    // Pin ourselves to a separate processor
+    CPU_ZERO(&mask);
+    CPU_SET(k-1, &mask);
+    if(sched_setaffinity(0, sizeof(mask), &mask)) {
+      perror("sched_setaffinity()");
+      fprintf(stderr, "WARNING (PID %d): Unable to pin to CPU %d. (Too many threads?)\n",
+	      pid,
+	      k-1);
+    }
+    else
+      fprintf(stderr, "Packette (PID %d): Pinned self to CPU %d.\n",
+	      pid,
+	      k-1);
+    
     // Install signal handler so we cleanly flush packets
     // From GNU docs:
     //  https://www.gnu.org/software/libc/manual/html_node/Sigaction-Function-Example.html
@@ -356,7 +376,7 @@ int main(int argc, char **argv) {
       }
     }
     
-    sprintf(tmp2, "%s_%s_%d.orphans", tmp1, addr_str, port);
+    sprintf(tmp2, "%s_%s_%d.orphans", tmp1, addr_str, port + k - 1);
     
     // Open streams for output
     if( ! (orphan_file = fopen(tmp2, "wb"))) {
@@ -486,7 +506,7 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &new_action, NULL);
 
     fprintf(stderr,
-	    "Packette (parent): waiting for children to finish...\n");
+	    "Packette (parent): Waiting for children to finish...\n");
     
 	    
     k = children;

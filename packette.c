@@ -22,6 +22,9 @@
 // Time
 #include <time.h>
 
+// Shared memory (for interprocess comms without IPC)
+#include <sys/mman.h>
+
 // Local stuff
 #include "packette.h"
 
@@ -216,6 +219,10 @@ int main(int argc, char **argv) {
   struct tm lt;            // For holding time stuff
   time_t secs;
   char tmp1[1024], tmp2[1024];
+
+  // Shared memory for performance reporting
+  void *scratchpad;
+  struct timeval parent_timeout;
   
   // lol "basic" shit in C is annoying.
   // Default values
@@ -312,6 +319,20 @@ int main(int argc, char **argv) {
   }
 
   fprintf(stderr, "Packette (parent): Using output prefix '%s'\n", tmp1);
+
+  // Allocated shared memory
+  if(! (scratchpad = mmap(NULL,
+			  children*sizeof(unsigned long)*2,
+			  PROT_READ | PROT_WRITE,
+			  MAP_SHARED | MAP_ANONYMOUS,
+			  -1,
+			  0))) {
+
+    perror("mmap()");
+    exit(EXIT_FAILURE);
+  }
+  
+  fprintf(stderr, "Packette (parent): Created shared memory scratchpad for performance reporting.\n");
   
   ////////////////////// SPAWNING ////////////////////
   
@@ -500,15 +521,47 @@ int main(int argc, char **argv) {
   else {
     ////////////////// PARENT //////////////////
 
-    // Block SIGINT
+    // Capture SIGINT
+    new_action.sa_handler = &flushChild;
     sigemptyset (&new_action.sa_mask);
-    new_action.sa_handler = SIG_IGN;
-    sigaction(SIGINT, &new_action, NULL);
+    new_action.sa_flags = 0;
 
-    fprintf(stderr,
-	    "Packette (parent): Waiting for children to finish...\n");
+    sigaction(SIGINT, NULL, &old_action);
+    if (old_action.sa_handler != SIG_IGN)
+      sigaction(SIGINT, &new_action, NULL);
     
-	    
+    // Report status
+    *((unsigned long *)scratchpad) = 0;
+    
+    while(1) {
+
+      // Reset timeout
+      parent_timeout.tv_sec = TIMEOUT;
+      parent_timeout.tv_usec = 0;
+      
+      // Sit in timeout for exactly
+      while(1) {
+
+	// select() on stdin and dgaf about keystrokes
+	select(0, NULL, NULL, NULL, &parent_timeout);
+	if(parent_timeout.tv_usec == 0)
+	  break;
+      }
+
+      if(interrupt_flag) {
+	fprintf(stderr,
+	    "Packette (parent): Received SIGINT, waiting for children to finish...\n");
+	break;
+      }
+     
+      // Stupid test to see if it works
+      ++*((unsigned long *)scratchpad);
+
+      fprintf(stderr,
+	      "Derp: %.4u\r",
+	      *((unsigned long *)scratchpad));
+    }
+
     k = children;
     while(k--) {
       waitpid(kids[k], &retval, 0);
@@ -517,12 +570,22 @@ int main(int argc, char **argv) {
 	      k,
 	      kids[k]);
     }
+
+    // Destroy the persistant shared memory object
+    if(munmap(scratchpad, children*sizeof(unsigned long)*2)) {
+
+      perror("munmap()");
+      exit(EXIT_FAILURE);
+    }
+
+    fprintf(stderr, "Packette (parent): Deallocated shared memory scratchpad.\n");
     
+    // Unnecessary Cleanup
+    free(kids);
     exit(0);
   }
   
   // Even though this will get torn down on process completion,
   // come correct.
-  free(kids);
   //  cleanup();
 }   

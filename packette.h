@@ -37,7 +37,7 @@
 
 // 16 bytes
 struct assembly {
-  unsigned char board_id[6];     // 6 bytes: board MAC address (magic)
+  uint8_t board_id[6];     // 6 bytes: board MAC address (magic)
   uint16_t rel_offset;     // 2 bytes: Sample offset (relative to DRS4_STOP)
   uint64_t seqnum;          // 8 bytes: monotonically increases for each packet!!
 };
@@ -52,8 +52,8 @@ struct header {
 // 8 bytes + length
 struct channel {
 
-  unsigned char reserved[3];     // 3 bytes: 0x00 0x00 0x00 (at the top for alignment)
-  unsigned char channel;         // 1 byte:  Channel identifier
+  uint8_t reserved[3];     // 3 bytes: 0x00 0x00 0x00 (at the top for alignment)
+  uint8_t channel;         // 1 byte:  Channel identifier
   uint16_t num_samples;    // 2 bytes: Total number of samples across all fragments 
   uint16_t drs4_stop;      // 2 bytes: DRS4_STOP value
 

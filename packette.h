@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 // DRS4 specific stuff
 #define CAP_LEN 1024
 #define CAP_LEN_DIV2 512
@@ -52,9 +54,9 @@ struct header {
 // 8 bytes + length
 struct channel {
 
-  uint8_t reserved[3];     // 3 bytes: 0x00 0x00 0x00 (at the top for alignment)
-  uint8_t channel;         // 1 byte:  Channel identifier
-  uint16_t num_samples;    // 2 bytes: Total number of samples across all fragments 
+  uint16_t num_samples;    // 2 bytes: Number of samples in this fragment
+  uint16_t channel;        // 2 bytes: Channel identifier
+  uint16_t total_samples;  // 2 bytes: Total number of samples across all fragments 
   uint16_t drs4_stop;      // 2 bytes: DRS4_STOP value
 
   uint16_t samples[0];     // 0 length.  Casted pointer to the first sample

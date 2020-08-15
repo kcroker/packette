@@ -82,11 +82,13 @@ void super_nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordere
 void nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
   struct packette_transport *ptr;
+  unsigned int i;
   
   //
   // This does nothing but write packet headers and payloads to the ordered file.
   // (This removes buffer garbage)
   //
+  i = 0;
   while(vlen--) {
 
     // Get the first one, casting it so we can extract the fields
@@ -94,12 +96,13 @@ void nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file
 
     // Blast
     fwrite(buf,
-	   sizeof(struct packette_transport) + ptr->channel.num_samples * SAMPLE_WIDTH,
+	   msgs[i].msg_len,
 	   1,
 	   ordered_file);
 
     // Get the next one
     buf += BUFSIZE;
+    ++i;
   }
 }
 
@@ -120,7 +123,7 @@ void debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_fi
     "Event number:\t\t\t%u\n"
     "Trigger timestamp (low):\t%u\n"
     "Channel mask:\t\t\t%.2x %.2x %.2x %.2x %.2x %.2x %.2x %.2x\n"
-    "RESERVED:\t\t\t0x%.2x 0x%.2x 0x%.2x\n"
+    "Samples (this fragment):\t%u\n"
     "Channel number:\t\t\t%u\n"
     "Total samples (all fragments):\t%u\n"
     "DRS4 stop:\t\t\t%u\n"
@@ -149,9 +152,9 @@ void debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_fi
 	    ((unsigned char *)&(ptr->header.channel_mask))[2],
 	    ((unsigned char *)&(ptr->header.channel_mask))[1],
 	    ((unsigned char *)&(ptr->header.channel_mask))[0],
-	    ptr->channel.reserved[0], ptr->channel.reserved[1], ptr->channel.reserved[2],
-	    ptr->channel.channel,
 	    ptr->channel.num_samples,
+	    ptr->channel.channel,
+	    ptr->channel.total_samples,
 	    ptr->channel.drs4_stop,
 	    msgs[i].msg_len - sizeof(struct packette_transport));
     

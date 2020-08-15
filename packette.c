@@ -349,7 +349,7 @@ int main(int argc, char **argv) {
     // Open streams for output
     if(!ordered_file) {
       
-      sprintf(tmp2, "%s_%s_%d.ordered", tmp1, addr_str, port);
+      sprintf(tmp2, "%s_%s_%d.ordered", tmp1, addr_str, port + k - 1);
       if( ! (ordered_file = fopen(tmp2, "wb"))) {
 	perror("fopen()");
 	exit(EXIT_FAILURE);
@@ -390,7 +390,7 @@ int main(int argc, char **argv) {
 	    "Packette (PID %d): Listening at %s:%d...\n",
 	    pid,
 	    addr_str,
-	    port);
+	    port + k - 1);
         
     // Now need to allocate the message structures
     retval =

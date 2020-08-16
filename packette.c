@@ -243,9 +243,11 @@ int main(int argc, char **argv) {
   // Shared memory for performance reporting
   struct timeval parent_timeout;
   void *scratchpad;
-  volatile unsigned long *packets_processed;
-  volatile unsigned long *bytes_processed;
+  volatile unsigned long *packets_processed_ptr;
+  volatile unsigned long *bytes_processed_ptr;
   unsigned long *previous_processed;
+  unsigned long packets_processed;
+  unsigned long bytes_processed;
   char output[4906];
   float total_kpps;
   float total_MBps;
@@ -493,11 +495,11 @@ int main(int argc, char **argv) {
     ///////////////////// PERFORMANCE ///////////////////
 
     // Set up volatile pointers into the shared memory
-    packets_processed = (unsigned long *)scratchpad + 2*(k-1);
-    bytes_processed = (unsigned long *)scratchpad + 2*(k-1)+1;
+    packets_processed_ptr = (unsigned long *)scratchpad + 2*(k-1);
+    bytes_processed_ptr = (unsigned long *)scratchpad + 2*(k-1)+1;
 
-    *packets_processed = 0;
-    *bytes_processed = 0;
+    *packets_processed_ptr = 0;
+    *bytes_processed_ptr = 0;
     
     timeout.tv_sec = TIMEOUT;
     timeout.tv_nsec = 0;
@@ -521,8 +523,8 @@ int main(int argc, char **argv) {
       if (retval > 0) {
 
 	// XXX? Maybe we don't need to use the __atomic_X operations?
-	*bytes_processed += (*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file);
-	*packets_processed += retval;
+	*bytes_processed_ptr += (*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file);
+	*packets_processed_ptr += retval;
       }
       else {
 
@@ -626,10 +628,13 @@ int main(int argc, char **argv) {
 
       for(k = 0; k < children; ++k) {
 
-	// Careful with parens, need to ptr arithmetic on longs
-	// These pointers are volatile.
-	packets_processed = (unsigned long *)scratchpad + 2*k;
-	bytes_processed = (unsigned long *)scratchpad + 2*k + 1;
+	// Make some volatile pointers into shared memory
+	packets_processed_ptr = (unsigned long *)scratchpad + 2*k;
+	bytes_processed_ptr = (unsigned long *)scratchpad + 2*k + 1;
+
+	// Pull values from the volatile locations once
+	packets_processed = *packets_processed_ptr;
+	bytes_processed = *bytes_processed_ptr;
 	
 	// XXX Clearly not safe
 	// packets always 33 wide
@@ -637,22 +642,23 @@ int main(int argc, char **argv) {
 		"%s%6.d | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n",
 		output,
 		kids[k],
-		1000.0*(*packets_processed - previous_processed[2*k])/REFRESH_PERIOD,
-		(*bytes_processed - previous_processed[2*k + 1])/REFRESH_PERIOD,
-		(*packets_processed)/1e6,
-		(*bytes_processed)/1e6);
+		1000.0*(packets_processed - previous_processed[2*k])/REFRESH_PERIOD,
+		1.0*(bytes_processed - previous_processed[2*k + 1])/REFRESH_PERIOD,
+		packets_processed/1e6,
+		bytes_processed/1e6);
 
 	// Add totals
-	total_kpps = total_kpps + 1000.0*(*packets_processed - previous_processed[2*k])/REFRESH_PERIOD;
-	total_MBps = total_MBps + (*bytes_processed - previous_processed[2*k + 1])/REFRESH_PERIOD;
-	total_Mp = total_Mp + (*packets_processed)/1e6;
-	total_MB = total_MB + (*bytes_processed)/1e6;
+	total_kpps += 1000.0*(packets_processed - previous_processed[2*k])/REFRESH_PERIOD;
+	total_MBps += 1.0*(bytes_processed - previous_processed[2*k + 1])/REFRESH_PERIOD;
+	
+	total_Mp += packets_processed/1.0e6;
+	total_MB += bytes_processed/1.0e6;
 	
 	// Store for computation of instantaneous performances
-	previous_processed[2*k] = *packets_processed;
-	previous_processed[2*k + 1] = *bytes_processed;
+	previous_processed[2*k] = packets_processed;
+	previous_processed[2*k + 1] = bytes_processed;
       }
-
+      
       // Add in the totals
       sprintf(output,
 	      "%s-----------------------------------------------------------------\n", output);

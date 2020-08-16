@@ -594,7 +594,7 @@ int main(int argc, char **argv) {
     mvprintw(2, 1+6+33, "| Cumulative data");
     mvprintw(3, 0, "-----------------------------------------------------------------");
 
-#define REFRESH_PERIOD 200000
+#define REFRESH_PERIOD 100000
     while(1) {
 
       // Reset timeout
@@ -664,7 +664,7 @@ int main(int argc, char **argv) {
 	      "%s-----------------------------------------------------------------\n", output);
 
       sprintf(output,
-	      "%s Total | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n",
+	      "%s Total | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n\nPress Ctrl+C when you've had your fill...\n",
 	      output,
 	      total_kpps,
 	      total_MBps,

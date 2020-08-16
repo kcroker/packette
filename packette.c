@@ -34,11 +34,11 @@
 
 // Note that things are unsigned long because we want to avoid implicit casts
 // during computation.
-void (*process_packets_fptr)(void *buf,
-			     struct mmsghdr *msgs,
-			     int vlen,
-			     FILE *ordered_file,
-			     FILE *orphan_file);
+unsigned long (*process_packets_fptr)(void *buf,
+				      struct mmsghdr *msgs,
+				      int vlen,
+				      FILE *ordered_file,
+				      FILE *orphan_file);
 
 unsigned long *emptyBlock;
 
@@ -73,7 +73,7 @@ unsigned long buildChannelMap(unsigned long mask, unsigned char *channel_map) {
 //
 // PACKET PROCESSORS
 //
-void super_nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
+unsigned long super_nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
   //
   // Writes the entire message buffer at once, including deadspace not necessarily
@@ -83,18 +83,21 @@ void super_nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordere
 	 BUFSIZE,
 	 vlen,
 	 ordered_file);
+
+  return BUFSIZE;
 }
 
-void nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
+unsigned long nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
   struct packette_transport *ptr;
-  unsigned int i;
+  unsigned long bytes;
+
+  bytes = 0;
   
   //
   // This does nothing but write packet headers and payloads to the ordered file.
   // (This removes buffer garbage)
   //
-  i = 0;
   while(vlen--) {
 
     // Get the first one, casting it so we can extract the fields
@@ -102,17 +105,20 @@ void nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file
 
     // Blast
     fwrite(buf,
-	   msgs[i].msg_len,
+	   ptr->channel.num_samples*SAMPLE_WIDTH,
 	   1,
 	   ordered_file);
-
+    
+    bytes += ptr->channel.num_samples*SAMPLE_WIDTH;
+    
     // Get the next one
     buf += BUFSIZE;
-    ++i;
   }
+
+  return bytes;
 }
 
-void debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
+unsigned long debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
   struct packette_transport *ptr;
   unsigned int i;
@@ -168,12 +174,14 @@ void debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_fi
     buf += BUFSIZE;
     ++i;
   }
+  
+  return 0;
 }
 
 //
 // Called when the child receives SIGINT
 //
-void flushChild(int signum) {
+void flagInterrupt(int signum) {
 
   // This is a special volatile signal-safe integer type:
   //  https://wiki.sei.cmu.edu/confluence/display/c/SIG31-C.+Do+not+access+shared+objects+in+signal+handlers
@@ -221,8 +229,11 @@ int main(int argc, char **argv) {
   char tmp1[1024], tmp2[1024];
 
   // Shared memory for performance reporting
-  void *scratchpad;
   struct timeval parent_timeout;
+  void *scratchpad;
+  volatile unsigned long *packets_processed;
+  volatile unsigned long *bytes_processed;
+  unsigned long *previous_processed;
   
   // lol "basic" shit in C is annoying.
   // Default values
@@ -376,7 +387,7 @@ int main(int argc, char **argv) {
     // Install signal handler so we cleanly flush packets
     // From GNU docs:
     //  https://www.gnu.org/software/libc/manual/html_node/Sigaction-Function-Example.html
-    new_action.sa_handler = &flushChild;
+    new_action.sa_handler = &flagInterrupt;
     sigemptyset (&new_action.sa_mask);
     new_action.sa_flags = 0;
 
@@ -385,8 +396,7 @@ int main(int argc, char **argv) {
       sigaction(SIGINT, &new_action, NULL);
 
     ////////////////// STREAMS //////////////////
-    
-    	    
+       	    
     // Open streams for output
     if(!ordered_file) {
       
@@ -463,6 +473,15 @@ int main(int argc, char **argv) {
       msgs[i].msg_hdr.msg_iovlen = 1;
     }
 
+    ///////////////////// PERFORMANCE ///////////////////
+
+    // Set up volatile pointers into the shared memory
+    packets_processed = (unsigned long *)scratchpad + 2*(k-1);
+    bytes_processed = (unsigned long *)scratchpad + 2*(k-1)+1;
+
+    *packets_processed = 0;
+    *bytes_processed = 0;
+    
     timeout.tv_sec = TIMEOUT;
     timeout.tv_nsec = 0;
 
@@ -473,6 +492,7 @@ int main(int argc, char **argv) {
       // Try to grab at most vlen packets, timing out after TIMEOUT
       retval = recvmmsg(sockfd, msgs, vlen, 0, &timeout);
 
+#undef DEBUG
 #ifdef DEBUG
       fprintf(stderr,
 	      "Packette (PID %d): Received %d packets.\n",
@@ -481,8 +501,12 @@ int main(int argc, char **argv) {
 #endif
       
       // Process only the packets received
-      if (retval > 0)
-	(*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file);
+      if (retval > 0) {
+
+	// XXX? Maybe we don't need to use the __atomic_X operations?
+	*bytes_processed += (*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file);
+	*packets_processed += retval;
+      }
       else {
 
 	// If there was trouble, see if there was an interrupt
@@ -522,24 +546,30 @@ int main(int argc, char **argv) {
     ////////////////// PARENT //////////////////
 
     // Capture SIGINT
-    new_action.sa_handler = &flushChild;
+    new_action.sa_handler = &flagInterrupt;
     sigemptyset (&new_action.sa_mask);
     new_action.sa_flags = 0;
 
     sigaction(SIGINT, NULL, &old_action);
     if (old_action.sa_handler != SIG_IGN)
       sigaction(SIGINT, &new_action, NULL);
-    
-    // Report status
-    *((unsigned long *)scratchpad) = 0;
-    
+
+    // Allocate and initialize some local accounting for da kids
+    if(!(previous_processed = (unsigned long *)malloc(sizeof(unsigned long)*children*2))) {
+      perror("malloc()");
+      exit(EXIT_FAILURE);
+    }
+
+    // Zero it out
+    memset(previous_processed, 0x0, sizeof(unsigned long)*children*2);
+
     while(1) {
 
       // Reset timeout
-      parent_timeout.tv_sec = TIMEOUT;
-      parent_timeout.tv_usec = 0;
+      parent_timeout.tv_sec = 0;
+      parent_timeout.tv_usec = 200000;
       
-      // Sit in timeout for exactly
+      // Sit in timeout for exactly TIMEOUT 
       while(1) {
 
 	// select() on stdin and dgaf about keystrokes
@@ -548,20 +578,37 @@ int main(int argc, char **argv) {
 	  break;
       }
 
+      // Check for Ctrl+C
       if(interrupt_flag) {
 	fprintf(stderr,
 	    "Packette (parent): Received SIGINT, waiting for children to finish...\n");
 	break;
       }
-     
-      // Stupid test to see if it works
-      ++*((unsigned long *)scratchpad);
 
-      fprintf(stderr,
-	      "Derp: %.4u\r",
-	      *((unsigned long *)scratchpad));
+      // If not, output performance statistics
+      fprintf(stderr, "\r");
+      for(k = 0; k < children; ++k) {
+
+	// Careful with parens, need to ptr arithmetic on longs
+	// These pointers are volatile.
+	packets_processed = (unsigned long *)scratchpad + 2*k;
+	bytes_processed = (unsigned long *)scratchpad + 2*k + 1;
+	
+	fprintf(stderr,
+		"\t[PID %d: %7.3fpps, %7.3fbps]",
+		pid,
+		(*packets_processed - previous_processed[2*k])/0.2,
+		(*bytes_processed - previous_processed[2*k + 1])/0.2);
+
+	// Store for computation of instantaneous performances
+	previous_processed[2*k] = *packets_processed;
+	previous_processed[2*k + 1] = *bytes_processed;
+      }
     }
 
+    // Go to the next line, leaving final performance visible
+    fprintf(stderr, "\n");
+    
     k = children;
     while(k--) {
       waitpid(kids[k], &retval, 0);
@@ -571,7 +618,7 @@ int main(int argc, char **argv) {
 	      kids[k]);
     }
 
-    // Destroy the persistant shared memory object
+    // Unmap the shared memory
     if(munmap(scratchpad, children*sizeof(unsigned long)*2)) {
 
       perror("munmap()");
@@ -581,6 +628,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Packette (parent): Deallocated shared memory scratchpad.\n");
     
     // Unnecessary Cleanup
+    free(previous_processed);
     free(kids);
     exit(0);
   }

@@ -25,6 +25,9 @@
 // Shared memory (for interprocess comms without IPC)
 #include <sys/mman.h>
 
+// For total fluff
+#include <ncurses.h>
+
 // Local stuff
 #include "packette.h"
 
@@ -67,13 +70,22 @@ unsigned long buildChannelMap(unsigned long mask, unsigned char *channel_map) {
 }
 
 //
-// Everytime we push to the stream
-//
-
-//
 // PACKET PROCESSORS
 //
-unsigned long super_nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
+unsigned long nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
+
+  unsigned long bytes;
+  
+  // Oh yeah, we totally processed your packets
+  bytes = 0;
+  while(vlen--)
+    bytes += msgs[vlen].msg_len;
+  
+  return bytes;
+}
+
+
+unsigned long buffer_dump_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
   //
   // Writes the entire message buffer at once, including deadspace not necessarily
@@ -87,7 +99,7 @@ unsigned long super_nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FIL
   return BUFSIZE;
 }
 
-unsigned long nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
+unsigned long payload_dump_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
 
   struct packette_transport *ptr;
   unsigned long bytes;
@@ -234,6 +246,11 @@ int main(int argc, char **argv) {
   volatile unsigned long *packets_processed;
   volatile unsigned long *bytes_processed;
   unsigned long *previous_processed;
+  char output[4906];
+  float total_kpps;
+  float total_MBps;
+  float total_MB;
+  float total_Mp;
   
   // lol "basic" shit in C is annoying.
   // Default values
@@ -331,7 +348,7 @@ int main(int argc, char **argv) {
 
   fprintf(stderr, "Packette (parent): Using output prefix '%s'\n", tmp1);
 
-  // Allocated shared memory
+  // Allocated shared memory for performance statistics
   if(! (scratchpad = mmap(NULL,
 			  children*sizeof(unsigned long)*2,
 			  PROT_READ | PROT_WRITE,
@@ -563,11 +580,24 @@ int main(int argc, char **argv) {
     // Zero it out
     memset(previous_processed, 0x0, sizeof(unsigned long)*children*2);
 
+    //////////////////////////// PERFORMANCE REPORTING /////////////////////
+
+    // Enter ncurses mode
+    initscr();
+
+    // Print out a message and table header
+    mvprintw(0, 0, "Packette is in ur box, fillin ur drives...");
+    mvprintw(2, 1, "PID");
+    mvprintw(2, 1+6, "| Instantaneous rate");
+    mvprintw(2, 1+6+33, "| Cumulative data");
+    mvprintw(3, 0, "-----------------------------------------------------------------");
+
+#define REFRESH_PERIOD 200000
     while(1) {
 
       // Reset timeout
       parent_timeout.tv_sec = 0;
-      parent_timeout.tv_usec = 200000;
+      parent_timeout.tv_usec = REFRESH_PERIOD;
       
       // Sit in timeout for exactly TIMEOUT 
       while(1) {
@@ -585,8 +615,15 @@ int main(int argc, char **argv) {
 	break;
       }
 
-      // If not, output performance statistics
-      fprintf(stderr, "\r");
+      // Reset the output buffer position for sprintf
+      output[0] = 0;
+
+      // Reset the running totals
+      total_kpps = 0.0;
+      total_MBps = 0.0;
+      total_Mp = 0.0;
+      total_MB = 0.0;
+
       for(k = 0; k < children; ++k) {
 
 	// Careful with parens, need to ptr arithmetic on longs
@@ -594,21 +631,48 @@ int main(int argc, char **argv) {
 	packets_processed = (unsigned long *)scratchpad + 2*k;
 	bytes_processed = (unsigned long *)scratchpad + 2*k + 1;
 	
-	fprintf(stderr,
-		"\t[PID %d: %7.3fKpps, %7.3fkBps]",
-		pid,
-		(*packets_processed - previous_processed[2*k])/200.0,
-		(*bytes_processed - previous_processed[2*k + 1])/200.0);
+	// XXX Clearly not safe
+	// packets always 33 wide
+	sprintf(output,
+		"%s%6.d | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n",
+		output,
+		kids[k],
+		1000.0*(*packets_processed - previous_processed[2*k])/REFRESH_PERIOD,
+		(*bytes_processed - previous_processed[2*k + 1])/REFRESH_PERIOD,
+		(*packets_processed)/1e6,
+		(*bytes_processed)/1e6);
 
+	// Add totals
+	total_kpps = total_kpps + 1000.0*(*packets_processed - previous_processed[2*k])/REFRESH_PERIOD;
+	total_MBps = total_MBps + (*bytes_processed - previous_processed[2*k + 1])/REFRESH_PERIOD;
+	total_Mp = total_Mp + (*packets_processed)/1e6;
+	total_MB = total_MB + (*bytes_processed)/1e6;
+	
 	// Store for computation of instantaneous performances
 	previous_processed[2*k] = *packets_processed;
 	previous_processed[2*k + 1] = *bytes_processed;
       }
+
+      // Add in the totals
+      sprintf(output,
+	      "%s-----------------------------------------------------------------\n", output);
+
+      sprintf(output,
+	      "%s Total | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n",
+	      output,
+	      total_kpps,
+	      total_MBps,
+	      total_Mp,
+	      total_MB);
+    
+      mvprintw(4,0,output);
+      refresh();
     }
 
-    // Go to the next line, leaving final performance visible
-    fprintf(stderr, "\n");
+    // Close ncurses
+    endwin();
     
+    // Wait for the children to finish up
     k = children;
     while(k--) {
       waitpid(kids[k], &retval, 0);

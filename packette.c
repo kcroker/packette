@@ -302,7 +302,7 @@ int main(int argc, char **argv) {
   ///////////////// PARSING COMPLETE ///////////////////
   
   // Set the initial packet processing pointer to the preprocessor
-  process_packets_fptr = &debug_processor;
+  process_packets_fptr = &nop_processor;
 
   // Now compute the optimal vlen via truncated idiv
   vlen = L2_CACHE / BUFSIZE;
@@ -595,10 +595,10 @@ int main(int argc, char **argv) {
 	bytes_processed = (unsigned long *)scratchpad + 2*k + 1;
 	
 	fprintf(stderr,
-		"\t[PID %d: %7.3fpps, %7.3fbps]",
+		"\t[PID %d: %7.3fKpps, %7.3fkBps]",
 		pid,
-		(*packets_processed - previous_processed[2*k])/0.2,
-		(*bytes_processed - previous_processed[2*k + 1])/0.2);
+		(*packets_processed - previous_processed[2*k])/200.0,
+		(*bytes_processed - previous_processed[2*k + 1])/200.0);
 
 	// Store for computation of instantaneous performances
 	previous_processed[2*k] = *packets_processed;

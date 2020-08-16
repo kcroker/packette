@@ -49,6 +49,22 @@ unsigned long *emptyBlock;
 volatile sig_atomic_t interrupt_flag = 0;
 
 //
+// This is the sickness
+//
+char *packette_logo =
+" (                            )                                \n"
+" )\\ )     (         (      ( /(          *   )    *   )        \n"
+"(()/(     )\\        )\\     )\\())  (    ` )  /(  ` )  /(   (    \n"
+" /(_)) ((((_)(    (((_)  |((_)\\   )\\    ( )(_))  ( )(_))  )\\   \n"
+"(_))    )\\ _ )\\   )\\___  |_ ((_) ((_)  (_(_())  (_(_())  ((_)  \n"
+"| _ \\   (_)_\\(_) ((/ __| | |/ /  | __| |_   _|  |_   _|  | __| \n"
+"|  _/    / _ \\    | (__    ' <   | _|    | |      | |    | _|  \n"
+  "|_|     /_/ \\_\\    \\___|  _|\\_\\  |___|   |_|      |_|    |___| \n";
+                                                               
+
+
+
+//
 // Build channel map.  Returns the number of active channels
 // Assumes channel map has been initialized.
 //
@@ -588,11 +604,11 @@ int main(int argc, char **argv) {
     initscr();
 
     // Print out a message and table header
-    mvprintw(0, 0, "Packette is in ur box, fillin ur drives...");
-    mvprintw(2, 1, "PID");
-    mvprintw(2, 1+6, "| Instantaneous rate");
-    mvprintw(2, 1+6+33, "| Cumulative data");
-    mvprintw(3, 0, "-----------------------------------------------------------------");
+    mvprintw(0, 0, packette_logo);
+    mvprintw(9, 1, "PID");
+    mvprintw(9, 1+6, "| Instantaneous rate");
+    mvprintw(9, 1+6+33, "| Cumulative data");
+    mvprintw(10, 0, "-----------------------------------------------------------------");
 
 #define REFRESH_PERIOD 100000
     while(1) {
@@ -671,7 +687,7 @@ int main(int argc, char **argv) {
 	      total_Mp,
 	      total_MB);
     
-      mvprintw(4,0,output);
+      mvprintw(11,0,output);
       refresh();
     }
 

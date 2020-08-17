@@ -7,9 +7,11 @@
 // power of 2 for the receiving architecture pointer width
 #define ARCHITECTURE_WIDTH 8
 
-#define OVERFLOW_FLAG 0x0001
-#define UNDERFLOW_FLAG 0x0002
-#define NO_DATA_FLAG 0x0004
+// ENDIANNESS: These are in little endian so that they can be written as words
+//             directly to uncast memory
+#define OVERFLOW_FLAG 0x0100
+#define UNDERFLOW_FLAG 0x0200
+#define NO_DATA_FLAG 0x0400
 
 // Used for writing 8 bytes of no data quickly
 #define NO_DATA_FLAG_4X 0x0004000400040004
@@ -74,6 +76,22 @@ struct packette_transport {
   struct channel channel;        // 8 bytes + (variable)roi_width*SAMPLE_WIDTH
 };
 
+//
+// Defragmented channel block
+//
+
+//
+// This is the defragmented storage format
+// Saves some on header, but headers are small compared to payloads
+// Reuses structures from transport, despite redundancy, for rapid copy
+//
+struct packette_event {
+
+  uint32_t total_bytes;         // 4 bytes: total length of this event (for skipping)
+  struct header header;         // 16 bytes
+  struct channel channels[0];   // 0 length. Casted pointer to the first channel
+}
+  
 //////////////////////// PACKETTE TRANSPORT PROTOCOL END ////////////////////////////
 
 #define BUFSIZE (sizeof(struct packette_transport) + MAX_FRAGMENT_WIDTH*SAMPLE_WIDTH)

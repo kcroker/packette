@@ -51,19 +51,20 @@ volatile sig_atomic_t interrupt_flag = 0;
 //
 // This is the sickness
 //
+// Made with:
+//   http://patorjk.com/software/taag/
+//
 char *packette_logo =
-" (                            )                                \n"
-" )\\ )     (         (      ( /(          *   )    *   )        \n"
-"(()/(     )\\        )\\     )\\())  (    ` )  /(  ` )  /(   (    \n"
-" /(_)) ((((_)(    (((_)  |((_)\\   )\\    ( )(_))  ( )(_))  )\\   \n"
-"(_))    )\\ _ )\\   )\\___  |_ ((_) ((_)  (_(_())  (_(_())  ((_)  \n"
-"| _ \\   (_)_\\(_) ((/ __| | |/ /  | __| |_   _|  |_   _|  | __| \n"
-"|  _/    / _ \\    | (__    ' <   | _|    | |      | |    | _|  \n"
-  "|_|     /_/ \\_\\    \\___|  _|\\_\\  |___|   |_|      |_|    |___| \n";
+"  (                            )                                \n"
+"  )\\ )     (         (      ( /(          *   )    *   )        \n"
+" (()/(     )\\        )\\     )\\())  (    ` )  /(  ` )  /(   (    \n"
+"  /(_)) ((((_)(    (((_)  |((_)\\   )\\    ( )(_))  ( )(_))  )\\   \n"
+" (_))    )\\ _ )\\   )\\___  |_ ((_) ((_)  (_(_())  (_(_())  ((_)  \n"
+" | _ \\   (_)_\\(_) ((/ __| | |/ /  | __| |_   _|  |_   _|  | __| \n"
+" |  _/    / _ \\    | (__    ' <   | _|    | |      | |    | _|  \n"
+" |_|     /_/ \\_\\    \\___|  _|\\_\\  |___|   |_|      |_|    |___| \n";
+
                                                                
-
-
-
 //
 // Build channel map.  Returns the number of active channels
 // Assumes channel map has been initialized.
@@ -207,6 +208,288 @@ unsigned long debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *o
 }
 
 //
+// This processor strips headers and writes payloads in 
+// defragmented order.
+//
+// Out of order packets are shunted to orphan_file as
+// fixed buffer-length blocks for rapid sorting and
+// patching in a second-stage performed offline
+//
+uint32_t prev_event;
+uint64_t prev_seqnum;
+void *event;
+
+unsigned long strip_and_order_processor(void *buf,
+					struct mmsghdr *msgs,
+					int vlen,
+					FILE *ordered_file,
+					FILE *orphan_file) {
+
+  struct packette_transport *ptr;
+  struct packette_event *eptr;
+  
+  // Iterate over the packets we are given
+  while(vlen--) {
+
+    // Get the first one, casting it so we can extract the fields
+    ptr = (struct packette_transport *)buf;
+
+    // Gotta check sequence number first
+    if(ptr->assembly.seqnum < prev->assembly.seqnum) {
+
+      // Immediately buffered write to the orphans
+      fprintf(buf,
+	      BUFSIZE,
+	      1
+	      orphan_file);
+
+      // DO NOT update prev_seqnum
+    }
+    else {
+
+      // Gotta check again so we can drop duplicates
+      if(ptr->assembly.seqnum > prev->assembly.seqnum) {
+
+	// Are we in order?
+	if(ptr->assembly.seqnum == prev->assembly.seqnum + 1){
+
+	  // Ordered state
+	  
+	  // Are we still on the same event?
+	  if(ptr->header.event_num == prev->header.event_num) {
+
+	    // Are we still on the same channel?
+	    if(ptr->channel.channel == prev->channel.channel) {
+
+	      // Pointer should be at the correct location
+	      stride = ptr->channel.num_samples*SAMPLE_WIDTH;
+
+	      // Copy just the samples
+	      memcpy(eptr,
+		     &(ptr->samples),
+		     stride);
+
+	      // Advance the intraevent pointer
+	      eptr += stride;
+	      
+	      // Update accounting (for out of order)
+	      samples_written += ptr->channel.num_samples;
+	    }
+	    else {
+
+	      // We have finished a channel.
+	      // ===> 1) Write next channel header
+	      //      2) Update accounting
+
+	      // Copy over the new channel header and
+	      // the first payload fragment
+	      //
+	      // OOO Consider switching to bytes, because then
+	      // I don't have to do a multiplication here
+	      stride = sizeof(struct channel) + ptr->channel.num_samples*SAMPLE_WIDTH;
+	      memcpy(eptr,
+		     &(ptr->channel),
+		     stride);
+
+	      // Advance the intraevent pointer
+	      eptr += stride;
+	      
+	      // Update accounting
+	      samples_written = ptr->channel.num_samples;
+	    }
+	  }
+	  else {
+
+	    // We have finished an event. 
+	    // ===> 1) Write byte totals to memory
+	    //      2) Ship it on the ordereds tream
+	    //      3) Reset event workbench, copy
+	    //         everything
+	    //      4) Update accounting
+
+	    // Compute total bytes written via pointer arithmetic
+	    *((uint32_t *)event) = (void *)eptr - event;
+
+	    // Write the event
+	    fwrite(event,
+		   *((uint32_t *)event),
+		   1,
+		   ordered_file);
+
+	    // Reset the workbench
+	    // (notice that we skip the first spot, which
+	    //  holds the length of this event)
+	    eptr = event + sizeof(uint32_t);
+
+	    // Copy over as much new stuff as possible
+	    stride = sizeof(struct header) + sizeof(struct channel) + ptr->channel.num_samples*SAMPLE_WIDTH;
+	    memcpy(eptr,
+		   &(ptr->header),
+		   stride);
+	    eptr += stride;
+	    
+	    // New event: update accounting.
+	    samples_written = ptr->channel.num_samples;
+	  }
+	}
+	else {
+
+	  // We've skipped.
+	  // Close out anything currently open, possibly shipping.
+	  //
+	  // If I do this right, I can leave the UDP payload pointer position in the
+	  // same place and just have in-order processing resume as normal
+	  
+	  // Are we still on the same event?
+	  if(ptr->header.event_num == prev->header.event_num) {
+
+	    // On same event.
+	    // Are we still on the same channel?
+	    if(ptr->channel.channel == prev->channel.channel) {
+
+	      //
+	      // On same channel.
+	      // ===> We droped some number of delay line fragments
+	      //
+
+	      //
+	      //   samples_written contains the current number of ordered
+	      //   samples written.
+	      //
+	      // We will catch up to this.
+	      //
+	      // Number of samples in a fragment is
+	      // always equal to the ROI width *OR*
+	      // the entire delay line, in case of
+	      // multiple ROIs
+	      //
+	      // So seqnum arithmetic tells us how much to write
+	      // (note that -1 because we want the number of SKIPPED packets)
+
+	      //
+	      // OVERLOAD: stride will be eventually the byte stride in memory
+	      //           but we will use it intermediarily to reduce the amount
+	      //           of stack construction required to enter this function
+	      //
+	      stride = ptr->assembly.seqnum - prev->assembly.seqnum - 1;
+
+	      // From delta, we can compute the number of missing bytes
+	      stride *= ptr->channel.num_samples;
+
+	      // Account (out of order), so that the meaning of stride remains bytes for the memory
+	      // operation
+	      samples_written += stride;
+
+	      // Now make stride into bytes
+	      stride *= SAMPLE_WIDTH;
+	      
+	      // Now copy the missing samples from the already
+	      // allocated block of empty samples
+	      memcpy(eptr,
+		     emptySamples,
+		     stride);
+
+	      // Update the intraevent pointer
+	      eptr += stride;
+	    }
+	    else {
+
+	      //
+	      // We have switched channels, but of the same event.
+	      // ===> 1) Close out the remaining bytes of
+	      //         of the previous channel.
+	      //      2) Memory write header for new channel
+	      //      3) Memory Write samples
+	      //      4) Reset tracking quantities?
+	      //
+
+	      // Q: How we compute the remaining bytes of the previous channel?
+	      // A: samples_written
+	      stride = prev->channel.total_samples - samples_written;
+
+	      // Out of order accounting to update
+	      samples_written += stride;
+
+	      // Now make stride a byte stride
+	      stride *= SAMPLE_WIDTH;
+
+	      // Now copy the missing samples from the already
+	      // allocated block of empty samples
+	      memcpy(eptr,
+		     emptySamples,
+		     stride);
+
+	      // Update the intraevent pointer
+	      eptr += stride;
+
+	      // Now, handle the new channel data.
+	      
+	      //
+	      // CAVEAT: since we skipped packets, the channel offset might not be zero.
+	      //         e.g. we dropped the last fragment of the previous channel,
+	      //         and the first fragment of the next channel.
+	      //
+
+	      // Write the channel header
+	      stride = sizeof(struct channel);
+	      memcpy(eptr,
+		     &(ptr->channel),
+		     stride);
+	      eptr += stride;
+
+	      // Write empty data up to the relative offset
+	      if(ptr->assembly.rel_offset > 0) {
+		stride = ptr->assembly.rel_offset;
+		samples_written += stride;
+		stride *= SAMPLE_WIDTH;
+		memcpy(eptr,
+		       emptyBlock,
+		       stride);
+		eptr += stride;
+	      }
+
+	      // Now write the samples that we received
+	      stride = ptr->channel.num_samples*SAMPLE_WIDTH;
+	      memcpy(eptr,
+		     ptr->channel.samples,
+		     stride);
+ 	      eptr += stride;
+	      
+	      // Update accounting
+	      samples_written = ptr->channel.num_samples;
+	    }
+	  }
+	  else {
+
+	    // The big drop case is the hardest.
+	    
+	    // We have entirely switched events.
+	    // ===> 1) Close out the curent event.
+	    //      1a) Close out the current channel of the current event.
+	    //      1b) Determine the missing channels
+	    //      1c) Write empty headers for them
+	    //      1d) Ship the event
+	    //      2) Write out the new event header
+	    //      3) Determine what channels are missing
+	    //      4) Write out empty headers for them
+	    //      5) Write out the received channel header
+	    //      6) Determine missing fragments
+	    //      7) Write out empty space for them
+	    //      8) Write the received samples
+	    
+	  }
+	}
+      }
+      else {
+
+	// DUPLICATE UDP PACKET
+	// Drop it.
+      }
+    }
+  }
+}
+
+//
 // Called when the child receives SIGINT
 //
 void flagInterrupt(int signum) {
@@ -216,6 +499,7 @@ void flagInterrupt(int signum) {
   interrupt_flag = 1;
 }
 
+// Might want to divide this by 2 so that you don't take up all the L2 cache ;)
 #define L2_CACHE 256000
 #define TIMEOUT 1
 
@@ -250,25 +534,20 @@ int main(int argc, char **argv) {
   struct sigaction new_action, old_action;
 
   // Files and data output stuff
-  FILE *ordered_file;            // Stage I reconstruction (ordered and stripped) output
+  FILE *ordered_file;              // Stage I reconstruction (ordered and stripped) output
   FILE *orphan_file;               // Stage II reconstruction (unordered, raw) output
-  struct tm lt;            // For holding time stuff
+  struct tm lt;                    // For holding time stuff
   time_t secs;
   char tmp1[1024], tmp2[1024];
 
   // Shared memory for performance reporting
-  struct timeval parent_timeout;
+  struct timeval parent_timeout;   // timeval, timespec, tm ... ugh
   void *scratchpad;
-  volatile unsigned long *packets_processed_ptr;
-  volatile unsigned long *bytes_processed_ptr;
+  volatile unsigned long *packets_processed_ptr, *bytes_processed_ptr;
   unsigned long *previous_processed;
-  unsigned long packets_processed;
-  unsigned long bytes_processed;
+  unsigned long packets_processed, bytes_processed;
   char output[4906];
-  float total_kpps;
-  float total_MBps;
-  float total_MB;
-  float total_Mp;
+  float total_kpps, total_MBps, total_MB, total_Mp;
   
   // lol "basic" shit in C is annoying.
   // Default values
@@ -497,7 +776,7 @@ int main(int argc, char **argv) {
 	    vlen);
     
     // Now we do the magic.
-    // We read in directly to payload buffers
+    // We read in directly to payload buffers, which are offsets into a contiguous block
     memset(msgs, 0, sizeof(struct mmsghdr) * vlen);
     
     // Set this up to directly transfer payloads
@@ -539,6 +818,11 @@ int main(int argc, char **argv) {
       if (retval > 0) {
 
 	// XXX? Maybe we don't need to use the __atomic_X operations?
+	//
+	// Since these are flagged as volatile, this could be super slow
+	// since flagged as volatile... (lots of cache misses)
+	// Guess we'll find out... this might be why Solarflare's code
+	// ran so poorly?
 	*bytes_processed_ptr += (*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file);
 	*packets_processed_ptr += retval;
       }

@@ -337,7 +337,7 @@ int main(int argc, char **argv) {
   ///////////////// PARSING COMPLETE ///////////////////
   
   // Set the initial packet processing pointer to the preprocessor
-  process_packets_fptr = &nop_processor;
+  process_packets_fptr = &debug_processor;
 
   // Now compute the optimal vlen via truncated idiv
   vlen = L2_CACHE / BUFSIZE;
@@ -600,16 +600,19 @@ int main(int argc, char **argv) {
 
     //////////////////////////// PERFORMANCE REPORTING /////////////////////
 
-    // Enter ncurses mode
-    initscr();
+    if(ordered_file != stdout) {
+	 
+      // Enter ncurses mode
+      initscr();
 
-    // Print out a message and table header
-    mvprintw(0, 0, packette_logo);
-    mvprintw(9, 1, "PID");
-    mvprintw(9, 1+6, "| Instantaneous rate");
-    mvprintw(9, 1+6+33, "| Cumulative data");
-    mvprintw(10, 0, "-----------------------------------------------------------------");
-
+      // Print out a message and table header
+      mvprintw(0, 0, packette_logo);
+      mvprintw(9, 1, "PID");
+      mvprintw(9, 1+6, "| Instantaneous rate");
+      mvprintw(9, 1+6+33, "| Cumulative data");
+      mvprintw(10, 0, "-----------------------------------------------------------------");
+    }
+    
 #define REFRESH_PERIOD 100000
     while(1) {
 
@@ -680,19 +683,26 @@ int main(int argc, char **argv) {
 	      "%s-----------------------------------------------------------------\n", output);
 
       sprintf(output,
-	      "%s Total | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n\nPress Ctrl+C when you've had your fill...\n",
+	      "%s Total | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n\n",
 	      output,
 	      total_kpps,
 	      total_MBps,
 	      total_Mp,
 	      total_MB);
-    
-      mvprintw(11,0,output);
-      refresh();
+
+      // ncurses output?
+      if(ordered_file != stdout) {
+	mvprintw(11,0,output);
+	mvprintw(15,0,"Press Ctrl+C when you've had your fill...");
+	refresh();
+      }
+      else
+	fprintf(stderr, output);
     }
 
-    // Close ncurses
-    endwin();
+    // Close ncurses?
+    if(ordered_file != stdout)
+      endwin();
     
     // Wait for the children to finish up
     k = children;

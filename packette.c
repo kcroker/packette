@@ -617,9 +617,15 @@ int main(int argc, char **argv) {
     while(1) {
 
       // Reset timeout
-      parent_timeout.tv_sec = 0;
-      parent_timeout.tv_usec = REFRESH_PERIOD;
-      
+      if(ordered_file != stdout) {
+	parent_timeout.tv_sec = 0;
+      	parent_timeout.tv_usec = REFRESH_PERIOD;
+      }
+      else {
+	parent_timeout.tv_sec = 1;
+	parent_timeout.tv_usec = 0;
+      }
+	
       // Sit in timeout for exactly TIMEOUT 
       while(1) {
 

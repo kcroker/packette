@@ -208,25 +208,24 @@ unsigned long debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *o
 }
 
 //
-// This processor strips headers and writes payloads in 
-// defragmented order.
+// This processor writes ordered headers and payloads to one file,
+// and orphaned fixed width buffers to a different file for
+// later qsort() and merge.  Ordering is determined by the
+// sequence number.
 //
-// Out of order packets are shunted to orphan_file as
-// fixed buffer-length blocks for rapid sorting and
-// patching in a second-stage performed offline
-//
-uint32_t prev_event;
-uint64_t prev_seqnum;
-void *event;
+unsigned long order_processor(void *buf,
+			      struct mmsghdr *msgs,
+			      int vlen,
+			      FILE *ordered_file,
+			      FILE *orphan_file) {
 
-unsigned long strip_and_order_processor(void *buf,
-					struct mmsghdr *msgs,
-					int vlen,
-					FILE *ordered_file,
-					FILE *orphan_file) {
-
-  struct packette_transport *ptr;
-  struct packette_event *eptr;
+  struct packette_transport *ptr, *prev;
+  unsigned long bytes;
+  unsigned int stride;
+  
+  // Start counter at zero
+  bytes = 0;
+  prev = 0x0;
   
   // Iterate over the packets we are given
   while(vlen--) {
@@ -235,258 +234,49 @@ unsigned long strip_and_order_processor(void *buf,
     ptr = (struct packette_transport *)buf;
 
     // Gotta check sequence number first
-    if(ptr->assembly.seqnum < prev->assembly.seqnum) {
+    // NOTE: short circuiting ||
+    if(!prev || ptr->assembly.seqnum > prev->assembly.seqnum) {
 
-      // Immediately buffered write to the orphans
-      fprintf(buf,
-	      BUFSIZE,
-	      1
-	      orphan_file);
+      // So we don't compute it twice (though the compiler
+      // would probably do this for us)
+      stride = sizeof(struct packette_transport) + ptr->channel.num_samples*SAMPLE_WIDTH;
+      
+      // Immediately write the packet with
+      // only its payload to the output stream
+      fwrite(buf,
+	     stride,
+	     1,
+	     ordered_file);
 
-      // DO NOT update prev_seqnum
+      // Accounting
+      bytes += stride;
+      
+      // Update previous successfully processed position
+      prev = ptr;
     }
     else {
 
-      // Gotta check again so we can drop duplicates
-      if(ptr->assembly.seqnum > prev->assembly.seqnum) {
-
-	// Are we in order?
-	if(ptr->assembly.seqnum == prev->assembly.seqnum + 1){
-
-	  // Ordered state
-	  
-	  // Are we still on the same event?
-	  if(ptr->header.event_num == prev->header.event_num) {
-
-	    // Are we still on the same channel?
-	    if(ptr->channel.channel == prev->channel.channel) {
-
-	      // Pointer should be at the correct location
-	      stride = ptr->channel.num_samples*SAMPLE_WIDTH;
-
-	      // Copy just the samples
-	      memcpy(eptr,
-		     &(ptr->samples),
-		     stride);
-
-	      // Advance the intraevent pointer
-	      eptr += stride;
-	      
-	      // Update accounting (for out of order)
-	      samples_written += ptr->channel.num_samples;
-	    }
-	    else {
-
-	      // We have finished a channel.
-	      // ===> 1) Write next channel header
-	      //      2) Update accounting
-
-	      // Copy over the new channel header and
-	      // the first payload fragment
-	      //
-	      // OOO Consider switching to bytes, because then
-	      // I don't have to do a multiplication here
-	      stride = sizeof(struct channel) + ptr->channel.num_samples*SAMPLE_WIDTH;
-	      memcpy(eptr,
-		     &(ptr->channel),
-		     stride);
-
-	      // Advance the intraevent pointer
-	      eptr += stride;
-	      
-	      // Update accounting
-	      samples_written = ptr->channel.num_samples;
-	    }
-	  }
-	  else {
-
-	    // We have finished an event. 
-	    // ===> 1) Write byte totals to memory
-	    //      2) Ship it on the ordereds tream
-	    //      3) Reset event workbench, copy
-	    //         everything
-	    //      4) Update accounting
-
-	    // Compute total bytes written via pointer arithmetic
-	    *((uint32_t *)event) = (void *)eptr - event;
-
-	    // Write the event
-	    fwrite(event,
-		   *((uint32_t *)event),
-		   1,
-		   ordered_file);
-
-	    // Reset the workbench
-	    // (notice that we skip the first spot, which
-	    //  holds the length of this event)
-	    eptr = event + sizeof(uint32_t);
-
-	    // Copy over as much new stuff as possible
-	    stride = sizeof(struct header) + sizeof(struct channel) + ptr->channel.num_samples*SAMPLE_WIDTH;
-	    memcpy(eptr,
-		   &(ptr->header),
-		   stride);
-	    eptr += stride;
-	    
-	    // New event: update accounting.
-	    samples_written = ptr->channel.num_samples;
-	  }
-	}
-	else {
-
-	  // We've skipped.
-	  // Close out anything currently open, possibly shipping.
-	  //
-	  // If I do this right, I can leave the UDP payload pointer position in the
-	  // same place and just have in-order processing resume as normal
-	  
-	  // Are we still on the same event?
-	  if(ptr->header.event_num == prev->header.event_num) {
-
-	    // On same event.
-	    // Are we still on the same channel?
-	    if(ptr->channel.channel == prev->channel.channel) {
-
-	      //
-	      // On same channel.
-	      // ===> We droped some number of delay line fragments
-	      //
-
-	      //
-	      //   samples_written contains the current number of ordered
-	      //   samples written.
-	      //
-	      // We will catch up to this.
-	      //
-	      // Number of samples in a fragment is
-	      // always equal to the ROI width *OR*
-	      // the entire delay line, in case of
-	      // multiple ROIs
-	      //
-	      // So seqnum arithmetic tells us how much to write
-	      // (note that -1 because we want the number of SKIPPED packets)
-
-	      //
-	      // OVERLOAD: stride will be eventually the byte stride in memory
-	      //           but we will use it intermediarily to reduce the amount
-	      //           of stack construction required to enter this function
-	      //
-	      stride = ptr->assembly.seqnum - prev->assembly.seqnum - 1;
-
-	      // From delta, we can compute the number of missing bytes
-	      stride *= ptr->channel.num_samples;
-
-	      // Account (out of order), so that the meaning of stride remains bytes for the memory
-	      // operation
-	      samples_written += stride;
-
-	      // Now make stride into bytes
-	      stride *= SAMPLE_WIDTH;
-	      
-	      // Now copy the missing samples from the already
-	      // allocated block of empty samples
-	      memcpy(eptr,
-		     emptySamples,
-		     stride);
-
-	      // Update the intraevent pointer
-	      eptr += stride;
-	    }
-	    else {
-
-	      //
-	      // We have switched channels, but of the same event.
-	      // ===> 1) Close out the remaining bytes of
-	      //         of the previous channel.
-	      //      2) Memory write header for new channel
-	      //      3) Memory Write samples
-	      //      4) Reset tracking quantities?
-	      //
-
-	      // Q: How we compute the remaining bytes of the previous channel?
-	      // A: samples_written
-	      stride = prev->channel.total_samples - samples_written;
-
-	      // Out of order accounting to update
-	      samples_written += stride;
-
-	      // Now make stride a byte stride
-	      stride *= SAMPLE_WIDTH;
-
-	      // Now copy the missing samples from the already
-	      // allocated block of empty samples
-	      memcpy(eptr,
-		     emptySamples,
-		     stride);
-
-	      // Update the intraevent pointer
-	      eptr += stride;
-
-	      // Now, handle the new channel data.
-	      
-	      //
-	      // CAVEAT: since we skipped packets, the channel offset might not be zero.
-	      //         e.g. we dropped the last fragment of the previous channel,
-	      //         and the first fragment of the next channel.
-	      //
-
-	      // Write the channel header
-	      stride = sizeof(struct channel);
-	      memcpy(eptr,
-		     &(ptr->channel),
-		     stride);
-	      eptr += stride;
-
-	      // Write empty data up to the relative offset
-	      if(ptr->assembly.rel_offset > 0) {
-		stride = ptr->assembly.rel_offset;
-		samples_written += stride;
-		stride *= SAMPLE_WIDTH;
-		memcpy(eptr,
-		       emptyBlock,
-		       stride);
-		eptr += stride;
-	      }
-
-	      // Now write the samples that we received
-	      stride = ptr->channel.num_samples*SAMPLE_WIDTH;
-	      memcpy(eptr,
-		     ptr->channel.samples,
-		     stride);
- 	      eptr += stride;
-	      
-	      // Update accounting
-	      samples_written = ptr->channel.num_samples;
-	    }
-	  }
-	  else {
-
-	    // The big drop case is the hardest.
-	    
-	    // We have entirely switched events.
-	    // ===> 1) Close out the curent event.
-	    //      1a) Close out the current channel of the current event.
-	    //      1b) Determine the missing channels
-	    //      1c) Write empty headers for them
-	    //      1d) Ship the event
-	    //      2) Write out the new event header
-	    //      3) Determine what channels are missing
-	    //      4) Write out empty headers for them
-	    //      5) Write out the received channel header
-	    //      6) Determine missing fragments
-	    //      7) Write out empty space for them
-	    //      8) Write the received samples
-	    
-	  }
-	}
+      if(ptr->assembly.seqnum < prev->assembly.seqnum) {
+	// Immediately buffered write the fixed width
+	// buffer to the orphans
+	fwrite(buf,
+	       BUFSIZE,
+	       1,
+	       orphan_file);
+	
+	// Accounting
+	bytes += BUFSIZE;
       }
-      else {
 
-	// DUPLICATE UDP PACKET
-	// Drop it.
-      }
+      // If we ended up here, it was a duplicate ==> drop it.
     }
+
+    // Advance to the next packet
+    buf += BUFSIZE;
   }
+
+  // Return bytes written to disk
+  return bytes;
 }
 
 //

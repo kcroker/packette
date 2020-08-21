@@ -75,22 +75,6 @@ struct packette_transport {
   struct header header;          // 16 bytes
   struct channel channel;        // 8 bytes + (variable)roi_width*SAMPLE_WIDTH
 };
-
-//
-// Defragmented channel block
-//
-
-//
-// This is the defragmented storage format
-// Saves some on header, but headers are small compared to payloads
-// Reuses structures from transport, despite redundancy, for rapid copy
-//
-struct packette_event {
-
-  uint32_t total_bytes;         // 4 bytes: total length of this event (for skipping)
-  struct header header;         // 16 bytes
-  struct channel channels[0];   // 0 length. Casted pointer to the first channel
-}
   
 //////////////////////// PACKETTE TRANSPORT PROTOCOL END ////////////////////////////
 

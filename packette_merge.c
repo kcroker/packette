@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
   // Was it empty?
   if(!orphan_size) {
     fprintf(stderr,
-	    "SUCCESS: Attempted to merge an empty orphan file.  Congratulations, you received everything in order.\n");
+	    "SUCCESS: Attempted to merge an empty orphan file.  Congratulations, you received everything in order.  No merged file necessary.\n");
     exit(0);
   }
 

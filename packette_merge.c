@@ -45,6 +45,8 @@ int eval_seqnum(const void *a, const void *b) {
 //
 // Called when the child receives SIGINT
 //
+volatile char interrupt_flag;
+
 void flagInterrupt(int signum) {
 
   // This is a special volatile signal-safe integer type:
@@ -74,10 +76,8 @@ void flagInterrupt(int signum) {
 int main(int argc, char **argv) {
 
   // Argument parsing stuff
-  int flags, opt;
-  int nsecs, tfnd;
-  unsigned short port;
-  char *addr_str;
+  int opt;
+  char *prefix_str;
 
   // Signal handling stuff
   struct sigaction new_action, old_action;
@@ -88,8 +88,12 @@ int main(int argc, char **argv) {
   FILE *merged_file;               // Merged output
 
   // General purpose string buffers
-  char tmp1[1024], tmp2[1024];
+  char tmp1[1024];
 
+  // Merging stuff
+  unsigned long orphan_size;
+  void *orphans, *buf, *ordered, *ptr;
+  
   // Initialization
   tmp1[0] = 0x0;
   merged_file = 0x0;
@@ -124,7 +128,7 @@ int main(int argc, char **argv) {
   sprintf(tmp1, "%s.orphans", prefix_str);
 
   // Open the orphansfile
-  if(! (orphan_file = fopen(tmp, "rb"))) {
+  if(! (orphan_file = fopen(tmp1, "rb"))) {
     perror("fopen()");
     exit(EXIT_FAILURE);
   }
@@ -138,7 +142,7 @@ int main(int argc, char **argv) {
   // Was it empty?
   if(!orphan_size) {
     fprintf(stderr,
-	    "SUCESS: Attempted to merge an empty orphan file.  Congratulations, you received everything in order.\n");
+	    "SUCCESS: Attempted to merge an empty orphan file.  Congratulations, you received everything in order.\n");
     exit(0);
   }
 
@@ -159,14 +163,14 @@ int main(int argc, char **argv) {
   }
 
   // Go back to the beginning and load the stream
-  fseek(orphan_file, 0, SEEK_START);
+  fseek(orphan_file, 0, SEEK_SET);
   fread(buf,
 	BUFSIZE,
 	orphan_size / BUFSIZE,
 	orphan_file);
 
   // Check for weird errors that should not happen at this point
-  if(!feof() || ferror()) {
+  if(!feof(orphan_file) || ferror(orphan_file)) {
     perror("fread()");
     fprintf(stderr,
 	    "Here be dragons");
@@ -243,11 +247,11 @@ int main(int argc, char **argv) {
 
 	fprintf(stderr,
 		"Packette_merge: placing orphan %u\n",
-		(struct packette_transport *)ptr->assembly.seqnum);
+		((struct packette_transport *)ptr)->assembly.seqnum);
 	
 	// Write the orphan, ignoring excess buffer space
 	fwrite(ptr,
-	       sizeof(struct packette_transport) + (struct packette_transport *)ptr->channel.num_samples*SAMPLE_WIDTH,
+	       sizeof(struct packette_transport) + ((struct packette_transport *)ptr)->channel.num_samples*SAMPLE_WIDTH,
 	       1,
 	       merged_file);
 
@@ -257,13 +261,13 @@ int main(int argc, char **argv) {
 
       // Get the remainder of this ordered packet
       fread(ordered + sizeof(struct packette_transport),
-	    (struct packette_transport *)ordered->channel.num_samples*SAMPLE_WIDTH,
+	    ((struct packette_transport *)ordered)->channel.num_samples*SAMPLE_WIDTH,
 	    1,
 	    ordered_file);
 	    
       // Write out the entire ordered packet to merged
       fwrite(ordered,
-	     sizeof(struct packette_transport) + (struct packette_transport *)ordered->channel.num_samples*SAMPLE_WIDTH,
+	     sizeof(struct packette_transport) + ((struct packette_transport *)ordered)->channel.num_samples*SAMPLE_WIDTH,
 	     1,
 	     merged_file);
 
@@ -290,13 +294,13 @@ int main(int argc, char **argv) {
       
       // Write out all the remaining orphans
       // (this shouldn't happen?)
-      while(ptr - orhpans < orphan_size) {
+      while(ptr - orphans < orphan_size) {
 
 	fprintf(stderr,
 	      "WARNING: orphans with sequence number greater than the last ordered fragment exist.  This should not happen?\n");
 
 	fwrite(ptr,
-	       sizeof(struct packette_transport) + (struct packette_ptr *)ptr->channel.num_samples*SAMPLE_WIDTH,
+	       sizeof(struct packette_transport) + ((struct packette_transport *)ptr)->channel.num_samples*SAMPLE_WIDTH,
 	       1,
 	       ordered_file);
 
@@ -318,8 +322,8 @@ int main(int argc, char **argv) {
   }
 
   // Close streams
-  fclose(merged_stream);
-  fclose(ordered_stream);
+  fclose(merged_file);
+  fclose(ordered_file);
 
   // Clean up
   free(buf);

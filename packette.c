@@ -280,6 +280,83 @@ unsigned long order_processor(void *buf,
 }
 
 //
+// This processor randomly drops and shunts packets to the orphans.
+// This is for testing unordered and lossy reassembly downstream
+//
+unsigned long abandonment_processor(void *buf,
+				    struct mmsghdr *msgs,
+				    int vlen,
+				    FILE *ordered_file,
+				    FILE *orphan_file) {
+
+  struct packette_transport *ptr, *prev;
+  unsigned long bytes;
+  unsigned int stride;
+  unsigned char abandon;
+  
+  // Start counter at zero
+  bytes = 0;
+  prev = 0x0;
+  
+  // Iterate over the packets we are given
+  while(vlen--) {
+
+    // Get the first one, casting it so we can extract the fields
+    ptr = (struct packette_transport *)buf;
+
+#define ABANDONMENT_CHECK 80
+
+    // See if a random number between 0 and 128 exceeds the check
+    abandon = ((unsigned int)rand() & 127) > ABANDONMENT_CHECK;
+    
+    // Gotta check sequence number first
+    // NOTE: short circuiting ||
+    if(!prev || (!abandon && ptr->assembly.seqnum > prev->assembly.seqnum)) {
+
+      // So we don't compute it twice (though the compiler
+      // would probably do this for us)
+      stride = sizeof(struct packette_transport) + ptr->channel.num_samples*SAMPLE_WIDTH;
+      
+      // Immediately write the packet with
+      // only its payload to the output stream
+      fwrite(buf,
+	     stride,
+	     1,
+	     ordered_file);
+
+      // Accounting
+      bytes += stride;
+      
+      // Update previous successfully processed position
+      prev = ptr;
+    }
+    else {
+
+      fprintf(stderr, "FUCK");
+      if(abandon || ptr->assembly.seqnum < prev->assembly.seqnum) {
+	// Immediately buffered write the fixed width
+	// buffer to the orphans
+	fwrite(buf,
+	       BUFSIZE,
+	       1,
+	       orphan_file);
+	
+	// Accounting
+	bytes += BUFSIZE;
+      }
+
+      // If we ended up here, it was a duplicate ==> drop it.
+    }
+
+    // Advance to the next packet
+    buf += BUFSIZE;
+  }
+
+  // Return bytes written to disk
+  return bytes;
+}
+
+//
 // Called when the child receives SIGINT
 //
 void flagInterrupt(int signum) {
@@ -406,7 +483,7 @@ int main(int argc, char **argv) {
   ///////////////// PARSING COMPLETE ///////////////////
   
   // Set the initial packet processing pointer to the preprocessor
-  process_packets_fptr = &debug_processor;
+  process_packets_fptr = &abandonment_processor;
 
   // Now compute the optimal vlen via truncated idiv
   vlen = L2_CACHE / BUFSIZE;
@@ -487,6 +564,21 @@ int main(int argc, char **argv) {
       fprintf(stderr, "Packette (PID %d): Pinned self to CPU %d.\n",
 	      pid,
 	      k-1);
+
+    // Seed the random number generator with ... a better random number
+    // RECYCLE: FILE *orphan_file (from reception), opt (from argument parsing)
+    orphan_file = fopen("/dev/urandom", "rb");
+
+    // TIL sizeof can take symbols!
+    fread(&opt, sizeof(opt), 1, orphan_file);
+
+    // Seed and close.
+    srand(opt);
+    fprintf(stderr, "INFO: Random number generator seeded with /dev/urandom\n");
+    fclose(orphan_file);
+
+    // Reset the pointer.
+    orphan_file = 0x0;
     
     // Install signal handler so we cleanly flush packets
     // From GNU docs:
@@ -504,14 +596,14 @@ int main(int argc, char **argv) {
     // Open streams for output
     if(!ordered_file) {
       
-      sprintf(tmp2, "%s_%s_%d.ordered", tmp1, addr_str, port + k - 1);
+      sprintf(tmp2, "rawdata/%s_%s_%d.ordered", tmp1, addr_str, port + k - 1);
       if( ! (ordered_file = fopen(tmp2, "wb"))) {
 	perror("fopen()");
 	exit(EXIT_FAILURE);
       }
     }
     
-    sprintf(tmp2, "%s_%s_%d.orphans", tmp1, addr_str, port + k - 1);
+    sprintf(tmp2, "rawdata/%s_%s_%d.orphans", tmp1, addr_str, port + k - 1);
     
     // Open streams for output
     if( ! (orphan_file = fopen(tmp2, "wb"))) {

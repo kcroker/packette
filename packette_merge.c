@@ -38,8 +38,7 @@
 //
 int eval_seqnum(const void *a, const void *b) {
 
-  return ((const struct packette_transport *)a)->assembly.seqnum
-    < ((const struct packette_transport *)b)->assembly.seqnum;
+  return ((const struct packette_transport *)a)->assembly.seqnum - ((const struct packette_transport *)b)->assembly.seqnum;
 }
 
 //
@@ -92,7 +91,8 @@ int main(int argc, char **argv) {
 
   // Merging stuff
   unsigned long orphan_size;
-  void *orphans, *buf, *ordered, *ptr;
+  char *orphans;
+  struct packette_transport *tmp, *ptr;
   
   // Initialization
   tmp1[0] = 0x0;
@@ -149,31 +149,33 @@ int main(int argc, char **argv) {
   // Is it corrupted?
   if(orphan_size % BUFSIZE) {
     fprintf(stderr,
-	    "ERROR: Orphans file is not the correct length and qsort() will fail.  Corruption likely, but perhaps not terminal.  Walk the file yourself if you really need it.");
+	    "ERROR: Orphans file is not the correct length and qsort() will fail.\n\tCorruption likely, but perhaps not terminal.  Walk the file yourself if you really need it.\n");
     exit(EXIT_FAILURE);
   }
 
   // Attempt to allocate memory large enough to
   // sort the orphans in place
-  if(! (orphans = malloc(orphan_size))) {
+  if(! (orphans = (char *)malloc(orphan_size))) {
     perror("malloc()");
     fprintf(stderr,
-	    "ERROR: Failed to allocate %d bytes for in-place sort of orphans.  Your orphan file should not be gigabytes...");
+	    "ERROR: Failed to allocate %d bytes for in-place sort of orphans.  Your orphan file should not be gigabytes...\n");
     exit(EXIT_FAILURE);
   }
 
   // Go back to the beginning and load the stream
   fseek(orphan_file, 0, SEEK_SET);
-  fread(buf,
-	BUFSIZE,
-	orphan_size / BUFSIZE,
-	orphan_file);
 
-  // Check for weird errors that should not happen at this point
-  if(!feof(orphan_file) || ferror(orphan_file)) {
+  // This will die if the entire orphans file is larger than
+  // the available memory on the system
+  // Is this shitting on everything?
+  fread(orphans,
+  	BUFSIZE,
+  	orphan_size / BUFSIZE,
+  	orphan_file);
+
+  // Check for weirdness
+  if(ferror(orphan_file)) {
     perror("fread()");
-    fprintf(stderr,
-	    "Here be dragons");
     exit(EXIT_FAILURE);
   }
 
@@ -186,10 +188,10 @@ int main(int argc, char **argv) {
   // qsort() the orphans
   //
   fprintf(stderr,
-	  "Packette_merge: sorting %d orphan events...", orphan_size / BUFSIZE);
+	  "Packette_merge: sorting %d orphan events...\n", orphan_size / BUFSIZE);
   qsort(orphans, orphan_size / BUFSIZE, BUFSIZE, eval_seqnum);
   fprintf(stderr,
-	  "Packette_merge: sorting complete.");
+	  "Packette_merge: ...sorting complete.\n");
 
   //
   // Step 2)
@@ -206,13 +208,13 @@ int main(int argc, char **argv) {
   }
 
   sprintf(tmp1, "%s.merged", prefix_str);
-  if(! (merged_file = fopen(tmp1, "rb"))) {
+  if(! (merged_file = fopen(tmp1, "wb"))) {
     perror("fopen()");
     exit(EXIT_FAILURE);
   }
 
   // Allocate a buffer
-  if(! (ordered = malloc(BUFSIZE))) {
+  if(! (tmp = (struct packette_transport *)malloc(BUFSIZE))) {
     perror("malloc()");
     exit(EXIT_FAILURE);
   }
@@ -231,10 +233,12 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &new_action, NULL);
 
   // Perform the merge
+  ptr = (struct packette_transport *)orphans;
+  
   while(1) {
 
-    // Grab an ordered block header
-    fread(ordered,
+    // Try to grab the header block from the stream that arrived in-order
+    fread(tmp,
 	  sizeof(struct packette_transport),
 	  1,
 	  ordered_file);
@@ -243,35 +247,42 @@ int main(int argc, char **argv) {
     if(!feof(ordered_file) && !ferror(ordered_file)) {
 
       // Get caught up
-      while(eval_seqnum(ordered, ptr) > 0) {
+      // Notice we check for overrun and short-circuit, before we try to dereference ptr
+      // tmp makes sense, because the read was successful (we didn't run past the file)
+      while(((char *)ptr - orphans < orphan_size) && (ptr->assembly.seqnum < tmp->assembly.seqnum)) {
 
 	fprintf(stderr,
-		"Packette_merge: placing orphan %u\n",
-		((struct packette_transport *)ptr)->assembly.seqnum);
+		"Packette_merge: placing orphan %d at sequence position %jd\n",
+		((char *)ptr - orphans) / BUFSIZE,
+		ptr->assembly.seqnum);
 	
 	// Write the orphan, ignoring excess buffer space
 	fwrite(ptr,
-	       sizeof(struct packette_transport) + ((struct packette_transport *)ptr)->channel.num_samples*SAMPLE_WIDTH,
+	       sizeof(struct packette_transport) + ptr->channel.num_samples*SAMPLE_WIDTH,
 	       1,
 	       merged_file);
 
 	// Go to the next one
-	ptr += BUFSIZE;
+	// Since ptr is just the header type, we can't use pointer arithmetic here.
+	ptr = (struct packette_transport *)((char *)ptr + BUFSIZE);
       }
+      
+      // Write out the header+payload that arrived in-order to merged
+      fprintf(stderr, "packette_merge: placing in-order arrival %ld\n", tmp->assembly.seqnum);
 
-      // Get the remainder of this ordered packet
-      fread(ordered + sizeof(struct packette_transport),
-	    ((struct packette_transport *)ordered)->channel.num_samples*SAMPLE_WIDTH,
+      // Grab the payload (into payload position with pointer arithmetic)
+      // DANGER: if the packet is malformed, then this will corrupt memory.
+      fread(tmp + 1,
+	    tmp->channel.num_samples*SAMPLE_WIDTH,
 	    1,
 	    ordered_file);
-	    
-      // Write out the entire ordered packet to merged
-      fwrite(ordered,
-	     sizeof(struct packette_transport) + ((struct packette_transport *)ordered)->channel.num_samples*SAMPLE_WIDTH,
+      
+      fwrite(tmp,
+	     sizeof(struct packette_transport) + tmp->channel.num_samples*SAMPLE_WIDTH,
 	     1,
 	     merged_file);
 
-      // Duplicates will never happen, because we drop them in stage I.      
+      // Duplicates will never happen, because we drop them in stage I...
     }
     else {
 
@@ -289,26 +300,34 @@ int main(int argc, char **argv) {
 	      "Packette_merge: Finished processing all ordered fragments.\n");
 
       //
-      // Check some edge cases...
+      // Check some xedge cases...
       //
       
       // Write out all the remaining orphans
-      // (this shouldn't happen?)
-      while(ptr - orphans < orphan_size) {
+      // Do a byte difference, not a typed pointer difference
+
+      if((char *)ptr - orphans < orphan_size)
+      	fprintf(stderr,
+		"WARNING: %d orphans with sequence number greater than the last ordered fragment exist.\n\tThis should not happen in normal operation, but can happen in various debug scenarios (e.g. abandonment).  Merging them...\n",
+		(orphan_size - ((char *)ptr - orphans)) / BUFSIZE);
+
+      while((char *)ptr - orphans < orphan_size) {
 
 	fprintf(stderr,
-	      "WARNING: orphans with sequence number greater than the last ordered fragment exist.  This should not happen?\n");
+		"Packette_merge: placing orphan %d at sequence position %jd\n",
+		((char *)ptr - orphans) / BUFSIZE,
+		ptr->assembly.seqnum);
 
 	fwrite(ptr,
-	       sizeof(struct packette_transport) + ((struct packette_transport *)ptr)->channel.num_samples*SAMPLE_WIDTH,
+	       sizeof(struct packette_transport) + ptr->channel.num_samples*SAMPLE_WIDTH,
 	       1,
-	       ordered_file);
+	       merged_file);
 
-	ptr += BUFSIZE;
+	ptr = (struct packette_transport *)((char *)ptr + BUFSIZE);
       }
 
-      fprintf(stderr,
-	      "Packette_merge: Wrote any remaining orphans at end of ordered list.\n");
+      // End the while(1)
+      break;
     }
 
     // Look for Ctrl+C
@@ -326,7 +345,7 @@ int main(int argc, char **argv) {
   fclose(ordered_file);
 
   // Clean up
-  free(buf);
+  // free(tmp);
   free(orphans);
 
   // Done.

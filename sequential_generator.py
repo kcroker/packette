@@ -45,12 +45,12 @@ a_packette['event_num'] = 7
 a_packette['trigger_low'] = 12345
 a_packette['channel_mask'] = bytearray.fromhex('00 00 00 00 00 00 00 01')
 
-a_packette['num_samples'] = 1024
+a_packette['num_samples'] = 512
 a_packette['channel'] = 4
-a_packette['total_samples'] = 1024
+a_packette['total_samples'] = 512
 a_packette['drs4_stop'] = 126
 
-payload = bytearray(2048)
+payload = bytearray(1024)
 
 # Go get lifted
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

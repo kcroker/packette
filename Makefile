@@ -1,4 +1,8 @@
-CFLAG = -Wall -g
+CFLAGS = -Wall -g
+
+.PHONY : all clean packette packette_merge
+
+all: packette packette_merge
 
 packette:packette.c
 	gcc ${CFLAGS} -o $@ $^ -lncurses
@@ -6,8 +10,6 @@ packette:packette.c
 packette_merge: packette_merge.c
 	gcc ${CFLAGS} -o $@ $^
 
-all: packette packette_merge
-
 clean:
-	rm -f *.o
+	rm packette packette_merge
 

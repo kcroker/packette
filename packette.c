@@ -346,7 +346,6 @@ unsigned long abandonment_processor(void *buf,
     }
     else {
 
-      fprintf(stderr, "FUCK");
       if(abandon || ptr->assembly.seqnum < *prev_seqnum) {
 	// Immediately buffered write the fixed width
 	// buffer to the orphans

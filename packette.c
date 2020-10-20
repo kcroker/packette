@@ -41,7 +41,8 @@ unsigned long (*process_packets_fptr)(void *buf,
 				      struct mmsghdr *msgs,
 				      int vlen,
 				      FILE *ordered_file,
-				      FILE *orphan_file);
+				      FILE *orphan_file,
+				      uint64_t *prev_seqnum);
 
 unsigned long *emptyBlock;
 
@@ -89,7 +90,12 @@ unsigned long buildChannelMap(unsigned long mask, unsigned char *channel_map) {
 //
 // PACKET PROCESSORS
 //
-unsigned long nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
+unsigned long nop_processor(void *buf,
+			    struct mmsghdr *msgs,
+			    int vlen,
+			    FILE *ordered_file,
+			    FILE *orphan_file,
+			    uint64_t *prev_seqnum) {
 
   unsigned long bytes;
   
@@ -102,7 +108,12 @@ unsigned long nop_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ord
 }
 
 
-unsigned long buffer_dump_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
+unsigned long buffer_dump_processor(void *buf,
+				    struct mmsghdr *msgs,
+				    int vlen,
+				    FILE *ordered_file,
+				    FILE *orphan_file,
+				    uint64_t *prev_seqnum) {
 
   //
   // Writes the entire message buffer at once, including deadspace not necessarily
@@ -116,7 +127,12 @@ unsigned long buffer_dump_processor(void *buf, struct mmsghdr *msgs, int vlen, F
   return BUFSIZE;
 }
 
-unsigned long payload_dump_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
+unsigned long payload_dump_processor(void *buf,
+				     struct mmsghdr *msgs,
+				     int vlen,
+				     FILE *ordered_file,
+				     FILE *orphan_file,
+				     uint64_t *prev_seqnum) {
 
   struct packette_transport *ptr;
   unsigned long bytes;
@@ -147,7 +163,7 @@ unsigned long payload_dump_processor(void *buf, struct mmsghdr *msgs, int vlen, 
   return bytes;
 }
 
-unsigned long debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file) {
+unsigned long debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file, uint64_t *prev_seqnum) {
 
   struct packette_transport *ptr;
   unsigned int i;
@@ -217,15 +233,15 @@ unsigned long order_processor(void *buf,
 			      struct mmsghdr *msgs,
 			      int vlen,
 			      FILE *ordered_file,
-			      FILE *orphan_file) {
+			      FILE *orphan_file,
+			      uint64_t *prev_seqnum) {
 
-  struct packette_transport *ptr, *prev;
+  struct packette_transport *ptr;
   unsigned long bytes;
   unsigned int stride;
   
   // Start counter at zero
   bytes = 0;
-  prev = 0x0;
   
   // Iterate over the packets we are given
   while(vlen--) {
@@ -235,7 +251,7 @@ unsigned long order_processor(void *buf,
 
     // Gotta check sequence number first
     // NOTE: short circuiting ||
-    if(!prev || ptr->assembly.seqnum > prev->assembly.seqnum) {
+    if(!*prev_seqnum || ptr->assembly.seqnum > *prev_seqnum) {
 
       // So we don't compute it twice (though the compiler
       // would probably do this for us)
@@ -252,11 +268,11 @@ unsigned long order_processor(void *buf,
       bytes += stride;
       
       // Update previous successfully processed position
-      prev = ptr;
+      *prev_seqnum = ptr->assembly.seqnum;
     }
     else {
 
-      if(ptr->assembly.seqnum < prev->assembly.seqnum) {
+      if(ptr->assembly.seqnum < *prev_seqnum) {
 	// Immediately buffered write the fixed width
 	// buffer to the orphans
 	fwrite(buf,
@@ -287,31 +303,29 @@ unsigned long abandonment_processor(void *buf,
 				    struct mmsghdr *msgs,
 				    int vlen,
 				    FILE *ordered_file,
-				    FILE *orphan_file) {
+				    FILE *orphan_file,
+				    uint64_t *prev_seqnum) {
 
-  struct packette_transport *ptr, *prev;
+  struct packette_transport *ptr;
   unsigned long bytes;
   unsigned int stride;
-  unsigned char abandon;
+  uint8_t abandon;
   
   // Start counter at zero
   bytes = 0;
-  prev = 0x0;
-  
+
+#define ABANDONMENT_CHECK 80
+
   // Iterate over the packets we are given
   while(vlen--) {
 
     // Get the first one, casting it so we can extract the fields
     ptr = (struct packette_transport *)buf;
 
-#define ABANDONMENT_CHECK 80
-
     // See if a random number between 0 and 128 exceeds the check
-    abandon = ((unsigned int)rand() & 127) > ABANDONMENT_CHECK;
-    
-    // Gotta check sequence number first
-    // NOTE: short circuiting ||
-    if(!prev || (!abandon && ptr->assembly.seqnum > prev->assembly.seqnum)) {
+    abandon = (rand() & 127) > ABANDONMENT_CHECK;
+        
+    if(!*prev_seqnum || (!abandon && (ptr->assembly.seqnum > *prev_seqnum))) {
 
       // So we don't compute it twice (though the compiler
       // would probably do this for us)
@@ -328,12 +342,12 @@ unsigned long abandonment_processor(void *buf,
       bytes += stride;
       
       // Update previous successfully processed position
-      prev = ptr;
+      *prev_seqnum = ptr->assembly.seqnum;
     }
     else {
 
       fprintf(stderr, "FUCK");
-      if(abandon || ptr->assembly.seqnum < prev->assembly.seqnum) {
+      if(abandon || ptr->assembly.seqnum < *prev_seqnum) {
 	// Immediately buffered write the fixed width
 	// buffer to the orphans
 	fwrite(buf,
@@ -403,10 +417,12 @@ int main(int argc, char **argv) {
   // Files and data output stuff
   FILE *ordered_file;              // Stage I reconstruction (ordered and stripped) output
   FILE *orphan_file;               // Stage II reconstruction (unordered, raw) output
+  uint64_t prev_seqnum;            // Remembers the more recent sequence number written to the ordered stream
   struct tm lt;                    // For holding time stuff
   time_t secs;
   char tmp1[1024], tmp2[1024];
 
+  
   // Shared memory for performance reporting
   struct timeval parent_timeout;   // timeval, timespec, tm ... ugh
   void *scratchpad;
@@ -565,6 +581,19 @@ int main(int argc, char **argv) {
 	      pid,
 	      k-1);
 
+    // Install signal handler so we cleanly flush packets
+    // From GNU docs:
+    //  https://www.gnu.org/software/libc/manual/html_node/Sigaction-Function-Example.html
+    new_action.sa_handler = &flagInterrupt;
+    sigemptyset (&new_action.sa_mask);
+    new_action.sa_flags = 0;
+
+    sigaction(SIGINT, NULL, &old_action);
+    if (old_action.sa_handler != SIG_IGN)
+      sigaction(SIGINT, &new_action, NULL);
+
+    ///////////////// INITIALIZATION ///////////////
+    
     // Seed the random number generator with ... a better random number
     // RECYCLE: FILE *orphan_file (from reception), opt (from argument parsing)
     orphan_file = fopen("/dev/urandom", "rb");
@@ -580,17 +609,9 @@ int main(int argc, char **argv) {
     // Reset the pointer.
     orphan_file = 0x0;
     
-    // Install signal handler so we cleanly flush packets
-    // From GNU docs:
-    //  https://www.gnu.org/software/libc/manual/html_node/Sigaction-Function-Example.html
-    new_action.sa_handler = &flagInterrupt;
-    sigemptyset (&new_action.sa_mask);
-    new_action.sa_flags = 0;
-
-    sigaction(SIGINT, NULL, &old_action);
-    if (old_action.sa_handler != SIG_IGN)
-      sigaction(SIGINT, &new_action, NULL);
-
+    // Set the first expected sequence number to 0
+    prev_seqnum = 0;
+    
     ////////////////// STREAMS //////////////////
        	    
     // Open streams for output
@@ -610,6 +631,8 @@ int main(int argc, char **argv) {
       perror("fopen()");
       exit(EXIT_FAILURE);
     }
+    
+    ///////////////////// SOCKET ////////////////////
     
     // Get ready to receive multiple messages on a socket!
     // Code adapted from: man 2 recvmmsg, EXAMPLE
@@ -669,7 +692,7 @@ int main(int argc, char **argv) {
       msgs[i].msg_hdr.msg_iovlen = 1;
     }
 
-    ///////////////////// PERFORMANCE ///////////////////
+    ///////////////////// PERFORMANCE REPORTING ///////////////////
 
     // Set up volatile pointers into the shared memory
     packets_processed_ptr = (unsigned long *)scratchpad + 2*(k-1);
@@ -705,7 +728,7 @@ int main(int argc, char **argv) {
 	// since flagged as volatile... (lots of cache misses)
 	// Guess we'll find out... this might be why Solarflare's code
 	// ran so poorly?
-	*bytes_processed_ptr += (*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file);
+	*bytes_processed_ptr += (*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file, &prev_seqnum);
 	*packets_processed_ptr += retval;
       }
       else {

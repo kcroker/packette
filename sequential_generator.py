@@ -9,7 +9,7 @@ import struct
 import time
 
 # Transport packet format
-packette_transport_format = '6s H Q   I I 8s   I I I I'
+packette_transport_format = '6s H Q   I I 8s   H H H H'
 
 # Make an encoder
 packette_transport = struct.Struct(packette_transport_format)
@@ -20,9 +20,11 @@ from collections import namedtuple
 field_list = ['board_id',
               'rel_offset',
               'seqnum',
+
               'event_num',
               'trigger_low',
               'channel_mask',
+
               'num_samples',
               'channel',
               'total_samples',
@@ -38,9 +40,11 @@ a_packette = { key : None for key in field_list }
 a_packette['board_id'] = bytearray.fromhex('001337CA7500')
 a_packette['rel_offset'] = 0
 a_packette['seqnum'] = 0
+
 a_packette['event_num'] = 7
 a_packette['trigger_low'] = 12345
 a_packette['channel_mask'] = bytearray.fromhex('00 00 00 00 00 00 00 01')
+
 a_packette['num_samples'] = 1024
 a_packette['channel'] = 4
 a_packette['total_samples'] = 1024

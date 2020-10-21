@@ -1,6 +1,28 @@
 #!/usr/bin/python3
 
-# Transport packet format
+#
+# packette_python.py
+# Copyright(c) 2020 Kevin Croker
+#  for the Nishimura Instrumentation Fronteir Taskforce
+#
+# GNU GPL v3
+#
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# Provides a lightweight Python 3 interface to packette protocol transport frames.
+#
+# packetteRun objects allow you to browse events interlaced across multiple files
+# with a list access [].
+#
+# packetteEvent objects allow you to browse individual channels via
+# a dictionary access.
+#
+# packetteChannel objects allow you to browse all individual array positions
+# via a list access [].  Backing data is sparse, with unbacked positions
+# returning the "no data" bits high.
+#
+
+# Transport packet format incantation
 packette_transport_format = '6s H Q   I I Q   H H H H'
 
 # Make an encoder
@@ -25,11 +47,11 @@ field_list = ['board_id',
 # Got myself a 40
 packette_tuple = namedtuple('packette_tuple', field_list)
 
-class packette_run(object):
+class packetteRun(object):
 
     # The simple event class, contains a list of packette_channel objects
     # These are backed by numpy arrays, but support indexing beyond the present data
-    class packette_event(object):
+    class packetteEvent(object):
 
         def __init__(self, header):
             self.channels = {}
@@ -41,7 +63,7 @@ class packette_run(object):
             chan = 0
             while chan < 64:
                 if header['channel_mask'] & 0x1:
-                    self.channels[chan] = packette_channel(0, np.empty([0]))
+                    self.channels[chan] = packetteChannel(0, np.empty([0]))
 
                 # Advance to the next place in the mask
                 header['channel_mask'] >>= 1
@@ -51,7 +73,7 @@ class packette_run(object):
     # This acts like an array access, except
     # it returns NO_DATA for values that are not
     # defined 
-    class packette_channel(object):
+    class packetteChannel(object):
 
         # data is a numpy array
         def __init__(self, drs4_stop, data):
@@ -79,17 +101,8 @@ class packette_run(object):
                 return self.data[i]
             else:
                 return NO_DATA
-            
-    def __init__(self, fname):
 
-        self.fname = fname
-        self.events = []
-        self.header_size = packette_transport.calcsize()
-        self.board_id = None
-
-        # Load up the file
-        fp = fopen(fname, 'rb')
-        
+    def loadEvents(self, fp):
         # Start loading in event data
         prev_event_num = -1
         event = None
@@ -110,7 +123,7 @@ class packette_run(object):
             if self.board_id is None:
                 self.board_id = header['board_id']
             else if not self.board_id == header['board_id']:
-                raise Exception("ERROR: Heterogenous board identifiers in event stream.\n " \
+                raise Exception("ERROR: Heterogenous board identifiers in multifile event stream.\n " \
                                 "\tOutput from different boards should be directed to\n " \
                                 "\tdistinct packette instances on disjoint port ranges")
 
@@ -123,7 +136,7 @@ class packette_run(object):
                     prev_event_number = header['event_num']
                     
                 # Make a new event
-                event = packette_event(header)
+                event = packetteEvent(header)
 
             # Populate the channel data from this transport packet
             chan = event.channels[header['channel']]
@@ -135,8 +148,36 @@ class packette_run(object):
                 chan.data = np.array([header['total_samples']]))
                 
             # Read the payload from this packet
-            payload = np.frombuffer(self.fp.read(header['num_samples']*SAMPLE_WIDTH), dtype=int16)
+            payload = np.frombuffer(fp.read(header['num_samples']*SAMPLE_WIDTH), dtype=int16)
 
             # Write the payload at the relative offset within the numpy array
             chan.data[header['rel_offset']:header['rel_offset'] + header['num_samples']] = payload
+
+    # Deinterlace the request
+    def __getitem__(self, key):
+        numf = self.fnames.len()
+        findex = key % numf
+        index = math.floor(key / numf)
+
+        # Get the right one
+        return eventlists[numf][index]
+
+    # Initialize and load the files
+    def __init__(self, fnames):
+
+        # NOTE: fnames is assumed to be sorted in the order you want to deinterlace in!
+        # Check for stdin
+        if fnames == sys.stdin:
+            self.fps = [sys.stdin]
+        else:
+            self.fps = [fopen(f, 'rb') for f in fnames]
+            
+        self.header_size = packette_transport.calcsize()
+        self.board_id = None
+        self.eventlists = []
+        
+        # Load up a bunch of interleaved events
+        for fname in self.fnames:
+            self.eventlists.append(loadEvents(fp))
+            print("packette_python: loaded %s" % fname, file=sys.stderr)
             

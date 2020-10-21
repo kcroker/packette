@@ -19,6 +19,9 @@
 // Signals
 #include <signal.h>
 
+// Errs
+#include <errno.h>
+
 // Time
 #include <time.h>
 
@@ -42,7 +45,8 @@ unsigned long (*process_packets_fptr)(void *buf,
 				      int vlen,
 				      FILE *ordered_file,
 				      FILE *orphan_file,
-				      uint64_t *prev_seqnum);
+				      uint64_t *prev_seqnum,
+				      uint32_t *prev_event_num);
 
 unsigned long *emptyBlock;
 
@@ -95,7 +99,8 @@ unsigned long nop_processor(void *buf,
 			    int vlen,
 			    FILE *ordered_file,
 			    FILE *orphan_file,
-			    uint64_t *prev_seqnum) {
+			    uint64_t *prev_seqnum,
+			    uint32_t *prev_event_num) {
 
   unsigned long bytes;
   
@@ -113,7 +118,8 @@ unsigned long buffer_dump_processor(void *buf,
 				    int vlen,
 				    FILE *ordered_file,
 				    FILE *orphan_file,
-				    uint64_t *prev_seqnum) {
+				    uint64_t *prev_seqnum,
+				    uint32_t *prev_event_num) {
 
   //
   // Writes the entire message buffer at once, including deadspace not necessarily
@@ -132,7 +138,8 @@ unsigned long payload_dump_processor(void *buf,
 				     int vlen,
 				     FILE *ordered_file,
 				     FILE *orphan_file,
-				     uint64_t *prev_seqnum) {
+				     uint64_t *prev_seqnum,
+				     uint32_t *prev_event_num) {
 
   struct packette_transport *ptr;
   unsigned long bytes;
@@ -163,7 +170,13 @@ unsigned long payload_dump_processor(void *buf,
   return bytes;
 }
 
-unsigned long debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *ordered_file, FILE *orphan_file, uint64_t *prev_seqnum) {
+unsigned long debug_processor(void *buf,
+			      struct mmsghdr *msgs,
+			      int vlen,
+			      FILE *ordered_file,
+			      FILE *orphan_file,
+			      uint64_t *prev_seqnum,
+			      uint32_t *prev_event_num) {
 
   struct packette_transport *ptr;
   unsigned int i;
@@ -214,10 +227,15 @@ unsigned long debug_processor(void *buf, struct mmsghdr *msgs, int vlen, FILE *o
 	    ptr->channel.total_samples,
 	    ptr->channel.drs4_stop,
 	    msgs[i].msg_len - sizeof(struct packette_transport));
+
+    // Set the accounting
+    *prev_seqnum = ptr->assembly.seqnum;
+    *prev_event_num = ptr->header.event_num;
     
     // Get the next one
     buf += BUFSIZE;
     ++i;
+
   }
   
   return 0;
@@ -234,7 +252,8 @@ unsigned long order_processor(void *buf,
 			      int vlen,
 			      FILE *ordered_file,
 			      FILE *orphan_file,
-			      uint64_t *prev_seqnum) {
+			      uint64_t *prev_seqnum,
+			      uint32_t *prev_event_num) {
 
   struct packette_transport *ptr;
   unsigned long bytes;
@@ -304,7 +323,8 @@ unsigned long abandonment_processor(void *buf,
 				    int vlen,
 				    FILE *ordered_file,
 				    FILE *orphan_file,
-				    uint64_t *prev_seqnum) {
+				    uint64_t *prev_seqnum,
+				    uint32_t *prev_event_num) {
 
   struct packette_transport *ptr;
   unsigned long bytes;
@@ -343,6 +363,8 @@ unsigned long abandonment_processor(void *buf,
       
       // Update previous successfully processed position
       *prev_seqnum = ptr->assembly.seqnum;
+      *prev_event_num = ptr->header.event_num;
+      
     }
     else {
 
@@ -409,7 +431,8 @@ int main(int argc, char **argv) {
   int nsecs, tfnd;
   unsigned short port;
   char *addr_str;
-
+  unsigned int count;
+  
   // Signal handling stuff
   struct sigaction new_action, old_action;
 
@@ -420,7 +443,8 @@ int main(int argc, char **argv) {
   struct tm lt;                    // For holding time stuff
   time_t secs;
   char tmp1[1024], tmp2[1024];
-
+  unsigned int stash;
+  uint32_t prev_event_num;
   
   // Shared memory for performance reporting
   struct timeval parent_timeout;   // timeval, timespec, tm ... ugh
@@ -438,10 +462,14 @@ int main(int argc, char **argv) {
   addr_str = 0x0;
   tmp1[0] = 0x0;
   ordered_file = 0x0;
+  count = 0;
+
+  // XXX This is small kine wrong
+  prev_event_num = 0;
   
   /////////////////// ARGUMENT PARSING //////////////////
   
-  while ((opt = getopt(argc, argv, "t:p:n:o")) != -1) {
+  while ((opt = getopt(argc, argv, "t:p:n:oc:")) != -1) {
     switch (opt) {
     case 't':
       children = atoi(optarg);
@@ -455,8 +483,12 @@ int main(int argc, char **argv) {
     case 'o':
       ordered_file = stdout;
       break;
+    case 'c':
+      // We add one here so that we can bypass on 0
+      count = atoi(optarg) + 1;
+      break;
     default: /* '?' */
-      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-n output file prefix] [-o dump to standard out] BIND_ADDRESS\n",
+      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-n output file prefix] [-o dump to standard out] [-c event count] BIND_ADDRESS\n",
 	      argv[0]);
       exit(EXIT_FAILURE);
     }
@@ -495,10 +527,18 @@ int main(int argc, char **argv) {
 	  argv[optind],
 	  port);
 
+  // Report how many packets
+  if(!count) 
+    fprintf(stderr,
+	    "packette (parent): each child will listen until terminated with Ctrl+C\n");
+  else
+    fprintf(stderr,
+	    "packette (parent): each child will receive data from %d events and then terminate\n", count - 1);
+
   ///////////////// PARSING COMPLETE ///////////////////
   
   // Set the initial packet processing pointer to the preprocessor
-  process_packets_fptr = &abandonment_processor;
+  process_packets_fptr = &debug_processor;
 
   // Now compute the optimal vlen via truncated idiv
   vlen = L2_CACHE / BUFSIZE;
@@ -727,8 +767,19 @@ int main(int argc, char **argv) {
 	// since flagged as volatile... (lots of cache misses)
 	// Guess we'll find out... this might be why Solarflare's code
 	// ran so poorly?
-	*bytes_processed_ptr += (*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file, &prev_seqnum);
+	stash = prev_event_num;
+	*bytes_processed_ptr += (*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file, &prev_seqnum, &prev_event_num);
 	*packets_processed_ptr += retval;
+
+	// Keep track of packets received
+	// (check is never evaluated if count = 0)
+	if(count && (prev_event_num > stash)) {
+	  if(!--count) {
+	    fprintf(stderr,
+		    "packette (PID %d): Reached event limit.  Finishing up...\n");
+	    break;
+	  }
+	}
       }
       else {
 
@@ -830,6 +881,17 @@ int main(int argc, char **argv) {
 	break;
       }
 
+      // Check for the all children finished condition
+      // (The errno check is required in case the parent races
+      //  and the child process is not completely set up yet)
+      k = children;
+      retval = 1;
+      while(k--)
+	retval &= !errno & !(kids[k] - waitpid(kids[k], NULL, WNOHANG));
+
+      if(retval)
+	break;
+      
       // Reset the output buffer position for sprintf
       output[0] = 0;
 
@@ -888,6 +950,11 @@ int main(int argc, char **argv) {
       if(ordered_file != stdout) {
 	mvprintw(11,0,output);
 	mvprintw(15,0,"Press Ctrl+C when you've had your fill...");
+	if(count > 0) {
+	  sprintf(output, "...otherwise accumulating %d events per child", count-1);
+	  mvprintw(16,0,output);
+	}
+	
 	refresh();
       }
       else

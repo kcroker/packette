@@ -72,6 +72,7 @@ while True:
     
     # Increment
     a_packette['seqnum'] += 1
+    a_packette['event_num'] += 2
     
     # Sleep
     time.sleep(0.1)

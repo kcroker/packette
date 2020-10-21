@@ -9,7 +9,7 @@ import struct
 import time
 
 # Transport packet format
-packette_transport_format = '6s H Q   I I 8s   H H H H'
+packette_transport_format = '6s H Q   I I Q   H H H H'
 
 # Make an encoder
 packette_transport = struct.Struct(packette_transport_format)
@@ -43,7 +43,7 @@ a_packette['seqnum'] = 0
 
 a_packette['event_num'] = 7
 a_packette['trigger_low'] = 12345
-a_packette['channel_mask'] = bytearray.fromhex('00 00 00 00 00 00 00 01')
+a_packette['channel_mask'] = 0x0000000000000001
 
 a_packette['num_samples'] = 512
 a_packette['channel'] = 4

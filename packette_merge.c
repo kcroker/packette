@@ -1,32 +1,13 @@
 #define _GNU_SOURCE
 
-// Linux process scheduling
-#include <sched.h>
-
-// Sockets
-#include <netinet/ip.h>
+// Standard
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-
-// Multiprocess
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 // Signals
 #include <signal.h>
-
-// Time
-#include <time.h>
-
-// Shared memory (for interprocess comms without IPC)
-#include <sys/mman.h>
-
-// For total fluff
-#include <ncurses.h>
 
 // Local stuff
 #include "packette.h"
@@ -345,7 +326,7 @@ int main(int argc, char **argv) {
   fclose(ordered_file);
 
   // Clean up
-  // free(tmp);
+  free(tmp);
   free(orphans);
 
   // Done.

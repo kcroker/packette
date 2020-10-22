@@ -22,6 +22,14 @@
 # returning the "no data" bits high.
 #
 
+import struct
+import math
+import numpy as np
+import sys
+import os
+
+from collections import namedtuple
+
 # Transport packet format incantation
 packette_transport_format = '6s H Q   I I Q   H H H H'
 
@@ -29,8 +37,6 @@ packette_transport_format = '6s H Q   I I Q   H H H H'
 packette_transport = struct.Struct(packette_transport_format)
 
 # I got myself a shorty
-from collections import namedtuple
-
 field_list = ['board_id',
               'rel_offset',
               'seqnum',
@@ -44,8 +50,9 @@ field_list = ['board_id',
               'total_samples',
               'drs4_stop']
 
-# Got myself a 40
-packette_tuple = namedtuple('packette_tuple', field_list)
+# Sample width should be defined universally somwhere
+SAMPLE_WIDTH = 2
+NO_DATA = -1
 
 class packetteRun(object):
 
@@ -62,122 +69,184 @@ class packetteRun(object):
             # For every channel thats on in the mask, make a dictionary entry to it
             chan = 0
             while chan < 64:
+                print("mask: %x, channel: %d" % (header['channel_mask'], chan))
+                
                 if header['channel_mask'] & 0x1:
-                    self.channels[chan] = packetteChannel(0, np.empty([0]))
+                    self.channels[chan] = self.packetteChannel(0, np.empty([0], dtype=np.uint16))
 
                 # Advance to the next place in the mask
                 header['channel_mask'] >>= 1
                 chan += 1
                 
+        # This acts like an array access, except
+        # it returns NO_DATA for values that are not
+        # defined 
+        class packetteChannel(object):
 
-    # This acts like an array access, except
-    # it returns NO_DATA for values that are not
-    # defined 
-    class packetteChannel(object):
+            # data is a numpy array
+            def __init__(self, drs4_stop, payload):
+                self.drs4_stop = drs4_stop
+                self.payload = payload
 
-        # data is a numpy array
-        def __init__(self, drs4_stop, data):
-            self.drs4_stop = drs4_stop
-            self.data = data
-        
-        # Length
-        def __len__(self):
-            return self.data.len()
-        
-        # Return the data if its there, otherwise return NO_DATA
-        def __getitem__(self, key):
+            # Length
+            def __len__(self):
+                return len(self.payload)
 
-            if not isinstance(key, int):
-                raise Exception("key must be an integer")
+            # Return the data if its there, otherwise return NO_DATA
+            def __getitem__(self, key):
+
+                if not isinstance(key, int):
+                    raise IndexError("key must be an integer")
+
+                if key < 0 or key > 1024:
+                    raise IndexError("key lies outside of DRS4 switched cap array")
+
+                # Relative view
+                # Get the offset into the data we have
+                i = (self.drs4_stop + key) & 1023
+
+                # Return the data if its there
+                if i < len(self):
+                    return self.payload[i]
+                else:
+                    return NO_DATA
+
+            def __iter__(self):
+                return self.channelIterator(self)
+
+            class channelIterator(object):
+                def __init__(self, channel):
+                    self.channel = channel
+                    self.i = 0
+
+                def __next__(self):
+                    try:
+                        datum = self.channel[self.i]
+                    except IndexError as e:
+                        raise StopIteration
             
-            if key < 0 or key > 1024:
-                raise Exception("key lies outside of DRS4 switched cap array")
-
-            # Get the offset into the data we have
-            i = (self.drs4_stop + key) & 1023
-
-            # Return the data if its there
-            if i < self.length:
-                return self.data[i]
-            else:
-                return NO_DATA
-
+                    self.i += 1
+                    return datum
+        
     def loadEvents(self, fp):
         # Start loading in event data
         prev_event_num = -1
         event = None
+        events = []
         
         while True:
 
             # Grab a header
             try:
-                header = fp.read(header_size)
-            except:
-                fclose(fp)
+                # To make sure we get binary if stdin is given
+                # use the underlying buffer
+                header = fp.buffer.read(self.header_size)
+            except Exception as e:
+                print(e)
+                fp.close()
                 break
 
-            # Unpack it
-            header = packette_transport.unpack(header)
+            # If we successfully read something, but it wasn't long enough to be a header,
+            # we probably read EOF.
+            if len(header) < packette_transport.size:
+                break
+
+            # Unpack it and make a dictionary out of it
+            header = dict(zip(field_list, packette_transport.unpack(header)))
+
+            print(header)
 
             # Are we looking at the same board?
             if self.board_id is None:
                 self.board_id = header['board_id']
-            else if not self.board_id == header['board_id']:
+            elif not self.board_id == header['board_id']:
                 raise Exception("ERROR: Heterogenous board identifiers in multifile event stream.\n " \
                                 "\tOutput from different boards should be directed to\n " \
                                 "\tdistinct packette instances on disjoint port ranges")
 
-            # Did we graduate to a new event?
-            if prev_event_number < header['event_num']:
-
-                # If we had been building an event, its done now, add it
-                if not event is None:
-                    self.events.append(event)
-                    prev_event_number = header['event_num']
-                    
-                # Make a new event
-                event = packetteEvent(header)
-
+            # This logic is being weird.  Be explicit
+            if event is None or prev_event_num < header['event_num']:
+                # Make one and add it
+                event = self.packetteEvent(header)
+                prev_event_num = header['event_num']
+                events.append(event)                
+                
             # Populate the channel data from this transport packet
             chan = event.channels[header['channel']]
             
             # Is this the first data for this channel? 
-            if chan.len() == 0:
+            if len(chan) == 0:
                 # Replace the empty with a properly sized numpy array
                 chan.drs4_stop = header['drs4_stop']
-                chan.data = np.array([header['total_samples']]))
+                chan.payload = np.zeros(header['total_samples'])
                 
             # Read the payload from this packet
-            payload = np.frombuffer(fp.read(header['num_samples']*SAMPLE_WIDTH), dtype=int16)
+            payload = np.frombuffer(fp.buffer.read(header['num_samples']*SAMPLE_WIDTH), dtype=np.uint16)
+            print(payload.shape)
+            print(chan.payload.shape)
 
             # Write the payload at the relative offset within the numpy array
-            chan.data[header['rel_offset']:header['rel_offset'] + header['num_samples']] = payload
+            chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = payload
 
+        # Give them back
+        return events
+    
     # Deinterlace the request
     def __getitem__(self, key):
-        numf = self.fnames.len()
+        numf = len(self.fnames)
         findex = key % numf
         index = math.floor(key / numf)
 
+        print("Looking up event %d, which should index to stream %d, offset %d" % (key, findex, index))
         # Get the right one
-        return eventlists[numf][index]
+        return self.eventlists[findex][index]
 
     # Initialize and load the files
     def __init__(self, fnames):
 
         # NOTE: fnames is assumed to be sorted in the order you want to deinterlace in!
         # Check for stdin
-        if fnames == sys.stdin:
-            self.fps = [sys.stdin]
-        else:
-            self.fps = [fopen(f, 'rb') for f in fnames]
-            
-        self.header_size = packette_transport.calcsize()
+        self.header_size = packette_transport.size
         self.board_id = None
         self.eventlists = []
         
+        self.fnames = fnames
+        
+        if fnames == ['-']:
+            self.fps = [sys.stdin]
+        else:
+            self.fps = [open(f, 'rb') for f in fnames]
+
         # Load up a bunch of interleaved events
-        for fname in self.fnames:
-            self.eventlists.append(loadEvents(fp))
+        for fname,fp in zip(self.fnames, self.fps):
+            self.eventlists.append(self.loadEvents(fp))
             print("packette_python: loaded %s" % fname, file=sys.stderr)
+
+    def __iter__(self):
+        return self.runIterator(self)
+
+    class runIterator(object):
+        def __init__(self, run):
+            self.run = run
+            self.i = 0
+
+        def __next__(self):
+            try:
+                event = self.run[self.i]
+            except IndexError as e:
+                raise StopIteration
             
+            self.i += 1
+            return event
+        
+# Testing stub
+events = packetteRun(['-'])
+
+for event in events:
+    for chan, data in event.channels.items():
+        print("Event %d\nChannel: %d\nData: " % (event.event_num, chan))
+        print("drs4_stop: %d" % data.drs4_stop)
+        for datum in data:
+            print(datum)
+        
+        

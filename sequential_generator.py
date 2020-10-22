@@ -7,6 +7,7 @@ import select
 import random
 import struct
 import time
+import numpy as np
 
 # Transport packet format
 packette_transport_format = '6s H Q   I I Q   H H H H'
@@ -38,37 +39,41 @@ a_packette = { key : None for key in field_list }
 
 # Set it up
 a_packette['board_id'] = bytearray.fromhex('001337CA7500')
-a_packette['rel_offset'] = 0
+a_packette['rel_offset'] = 10
 a_packette['seqnum'] = 0
 
 a_packette['event_num'] = 7
 a_packette['trigger_low'] = 12345
-a_packette['channel_mask'] = 0x0000000000000001
+a_packette['channel_mask'] = 0x00000000000000011
 
-a_packette['num_samples'] = 512
+a_packette['num_samples'] = 128
 a_packette['channel'] = 4
-a_packette['total_samples'] = 512
+a_packette['total_samples'] = 256
 a_packette['drs4_stop'] = 126
 
-payload = bytearray(1024)
+payload = np.array(range(512), dtype=np.uint16).tobytes()
 
 # Go get lifted
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect((sys.argv[1], int(sys.argv[2])))
 
+# Alloc a buffer
+buf = bytearray()
+
 # Now start blasting
 while True:
 
+    
     # Sigh: Convert (unordered dictionary) -> namedtuple -> C structure
     header = packette_transport.pack(*packette_tuple(**a_packette))
 
     # How's that for convoluted slicing syntax?
     # Stick the header at the front of the payload
     # (since payload is the mutable type)
-    payload[0:0] = header
+    buf = header + payload
 
     # Bye bye
-    s.send(payload)
+    s.send(buf)
     
     # Increment
     a_packette['seqnum'] += 1

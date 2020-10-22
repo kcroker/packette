@@ -288,6 +288,7 @@ unsigned long order_processor(void *buf,
       
       // Update previous successfully processed position
       *prev_seqnum = ptr->assembly.seqnum;
+      *prev_event_num = ptr->header.event_num;
     }
     else {
 
@@ -464,12 +465,13 @@ int main(int argc, char **argv) {
   ordered_file = 0x0;
   count = 0;
 
-  // XXX This is small kine wrong
+  // Things for event counting
   prev_event_num = 0;
+  stash = -1;
   
   /////////////////// ARGUMENT PARSING //////////////////
   
-  while ((opt = getopt(argc, argv, "t:p:n:oc:")) != -1) {
+  while ((opt = getopt(argc, argv, "t:p:f:on:")) != -1) {
     switch (opt) {
     case 't':
       children = atoi(optarg);
@@ -477,18 +479,18 @@ int main(int argc, char **argv) {
     case 'p':
       port = atoi(optarg);
       break;
-    case 'n':
+    case 'f':
       strncpy(tmp1, optarg, 1024); 
       break;
     case 'o':
       ordered_file = stdout;
       break;
-    case 'c':
+    case 'n':
       // We add one here so that we can bypass on 0
       count = atoi(optarg) + 1;
       break;
     default: /* '?' */
-      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-n output file prefix] [-o dump to standard out] [-c event count] BIND_ADDRESS\n",
+      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-f output file prefix] [-o dump to standard out] [-n event count] BIND_ADDRESS\n",
 	      argv[0]);
       exit(EXIT_FAILURE);
     }
@@ -502,7 +504,7 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
     
-    fprintf(stderr, "Packette (parent): dumping to stdout...\n");
+    fprintf(stderr, "packette (parent): dumping to stdout...\n");
   }
 
   // Now grab mandatory positional arguments
@@ -522,7 +524,7 @@ int main(int argc, char **argv) {
     
   // Report what we've been asked to do
   fprintf(stderr,
-	  "Packette (parent): %d children will bind at %s, starting from port %d\n",
+	  "packette (parent): %d children will bind at %s, starting from port %d\n",
 	  children,
 	  argv[optind],
 	  port);
@@ -538,12 +540,12 @@ int main(int argc, char **argv) {
   ///////////////// PARSING COMPLETE ///////////////////
   
   // Set the initial packet processing pointer to the preprocessor
-  process_packets_fptr = &debug_processor;
+  process_packets_fptr = &order_processor;
 
   // Now compute the optimal vlen via truncated idiv
   vlen = L2_CACHE / BUFSIZE;
   fprintf(stderr,
-	  "Packette (parent): Determined %d packets will saturate L2 cache of %d bytes\n",
+	  "packette (parent): Determined %d packets will saturate L2 cache of %d bytes\n",
 	  vlen,
 	  L2_CACHE);
   
@@ -565,7 +567,7 @@ int main(int argc, char **argv) {
     strftime(tmp1, 1024, "%Y-%m-%d_%H-%M-%S", &lt);
   }
 
-  fprintf(stderr, "Packette (parent): Using output prefix '%s'\n", tmp1);
+  fprintf(stderr, "packette (parent): Using output prefix '%s'\n", tmp1);
 
   // Allocated shared memory for performance statistics
   if(! (scratchpad = mmap(NULL,
@@ -579,7 +581,7 @@ int main(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
   
-  fprintf(stderr, "Packette (parent): Created shared memory scratchpad for performance reporting.\n");
+  fprintf(stderr, "packette (parent): Created shared memory scratchpad for performance reporting.\n");
   
   ////////////////////// SPAWNING ////////////////////
   
@@ -589,7 +591,7 @@ int main(int argc, char **argv) {
   //    children == 0 (i.e. you've reached the end of your reproductive lifecycle)
   // Implemented as a negation.
   //
-  fprintf(stderr, "Packette (parent): Spawning %d children...\n", children);
+  fprintf(stderr, "packette (parent): Spawning %d children...\n", children);
   
   k = children;
   while(pid && k) {
@@ -616,7 +618,7 @@ int main(int argc, char **argv) {
 	      k-1);
     }
     else
-      fprintf(stderr, "Packette (PID %d): Pinned self to CPU %d.\n",
+      fprintf(stderr, "packette (PID %d): Pinned self to CPU %d.\n",
 	      pid,
 	      k-1);
 
@@ -642,7 +644,7 @@ int main(int argc, char **argv) {
 
     // Seed and close.
     srand(opt);
-    fprintf(stderr, "INFO: Random number generator seeded with /dev/urandom\n");
+    fprintf(stderr, "packette (parent): Random number generator seeded with /dev/urandom\n");
     fclose(orphan_file);
 
     // Reset the pointer.
@@ -696,7 +698,7 @@ int main(int argc, char **argv) {
 
     // Report success
     fprintf(stderr,
-	    "Packette (PID %d): Listening at %s:%d...\n",
+	    "packette (PID %d): Listening at %s:%d...\n",
 	    pid,
 	    addr_str,
 	    port + k - 1);
@@ -714,7 +716,7 @@ int main(int argc, char **argv) {
     
     // Report success.
     fprintf(stderr,
-	    "Packette (PID %d): Allocated %d bytes for direct socket transfer of %d packets.\n",
+	    "packette (PID %d): Allocated %d bytes for direct socket transfer of %d packets.\n",
 	    pid,
 	    BUFSIZE * vlen,
 	    vlen);
@@ -753,7 +755,7 @@ int main(int argc, char **argv) {
 #undef DEBUG
 #ifdef DEBUG
       fprintf(stderr,
-	      "Packette (PID %d): Received %d packets.\n",
+	      "packette (PID %d): Received %d packets.\n",
 	      pid,
 	      retval);
 #endif
@@ -767,19 +769,25 @@ int main(int argc, char **argv) {
 	// since flagged as volatile... (lots of cache misses)
 	// Guess we'll find out... this might be why Solarflare's code
 	// ran so poorly?
+
+	
 	stash = prev_event_num;
+	
 	*bytes_processed_ptr += (*process_packets_fptr)(buf, msgs, retval, ordered_file, orphan_file, &prev_seqnum, &prev_event_num);
 	*packets_processed_ptr += retval;
 
 	// Keep track of packets received
 	// (check is never evaluated if count = 0)
 	if(count && (prev_event_num > stash)) {
-	  if(!--count) {
+	  if(!(--count - 1)) {
 	    fprintf(stderr,
 		    "packette (PID %d): Reached event limit.  Finishing up...\n");
 	    break;
 	  }
 	}
+
+
+	
       }
       else {
 
@@ -793,7 +801,7 @@ int main(int argc, char **argv) {
 	    
 	    // Someone pressed Ctrl+C
 	    fprintf(stderr,
-		    "Packette (PID %d): Received SIGINT, finishing up...\n",
+		    "packette (PID %d): Received SIGINT, finishing up...\n",
 		    pid);
 	    break;
 	  }
@@ -813,7 +821,7 @@ int main(int argc, char **argv) {
     free(msgs);
 
     fprintf(stderr,
-	    "Packette (PID %d): Done.\n",
+	    "packette (PID %d): Done.\n",
 	    pid);
   }
   else {
@@ -877,7 +885,7 @@ int main(int argc, char **argv) {
       // Check for Ctrl+C
       if(interrupt_flag) {
 	fprintf(stderr,
-	    "Packette (parent): Received SIGINT, waiting for children to finish...\n");
+	    "packette (parent): Received SIGINT, waiting for children to finish...\n");
 	break;
       }
 
@@ -886,7 +894,7 @@ int main(int argc, char **argv) {
       //  and the child process is not completely set up yet)
       k = children;
       retval = 1;
-      while(k--)
+      while(retval && k--)
 	retval &= !errno & !(kids[k] - waitpid(kids[k], NULL, WNOHANG));
 
       if(retval)
@@ -957,9 +965,7 @@ int main(int argc, char **argv) {
 	
 	refresh();
       }
-      else
-	fprintf(stderr, output);
-    }
+   }
 
     // Close ncurses?
     if(ordered_file != stdout)
@@ -970,7 +976,7 @@ int main(int argc, char **argv) {
     while(k--) {
       waitpid(kids[k], &retval, 0);
       fprintf(stderr,
-	      "Packette (parent): child-%d (PID %d) has completed\n",
+	      "packette (parent): child-%d (PID %d) has completed\n",
 	      k,
 	      kids[k]);
     }
@@ -982,7 +988,7 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
 
-    fprintf(stderr, "Packette (parent): Deallocated shared memory scratchpad.\n");
+    fprintf(stderr, "packette (parent): Deallocated shared memory scratchpad.\n");
     
     // Unnecessary Cleanup
     free(previous_processed);

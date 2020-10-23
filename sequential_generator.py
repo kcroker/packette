@@ -39,7 +39,7 @@ a_packette = { key : None for key in field_list }
 
 # Set it up
 a_packette['board_id'] = bytearray.fromhex('001337CA7500')
-a_packette['rel_offset'] = 10
+a_packette['rel_offset'] = 0
 a_packette['seqnum'] = 0
 
 a_packette['event_num'] = 7
@@ -48,10 +48,10 @@ a_packette['channel_mask'] = 0x00000000000000011
 
 a_packette['num_samples'] = 128
 a_packette['channel'] = 4
-a_packette['total_samples'] = 256
+a_packette['total_samples'] = 128
 a_packette['drs4_stop'] = 126
 
-payload = np.array(range(512), dtype=np.uint16).tobytes()
+payload = np.array(range(a_packette['num_samples']), dtype=np.uint16).tobytes()
 
 # Go get lifted
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -80,4 +80,4 @@ while True:
     a_packette['event_num'] += 2
     
     # Sleep
-    time.sleep(0.1)
+    # time.sleep(0.00001)

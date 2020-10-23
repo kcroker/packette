@@ -69,7 +69,7 @@ class packetteRun(object):
             # For every channel thats on in the mask, make a dictionary entry to it
             chan = 0
             while chan < 64:
-                print("mask: %x, channel: %d" % (header['channel_mask'], chan))
+                # print("mask: %x, channel: %d" % (header['channel_mask'], chan))
                 
                 if header['channel_mask'] & 0x1:
                     self.channels[chan] = self.packetteChannel(0, np.empty([0], dtype=np.uint16))
@@ -154,7 +154,7 @@ class packetteRun(object):
             # Unpack it and make a dictionary out of it
             header = dict(zip(field_list, packette_transport.unpack(header)))
 
-            print(header)
+            # print(header)
 
             # Are we looking at the same board?
             if self.board_id is None:
@@ -182,10 +182,13 @@ class packetteRun(object):
                 
             # Read the payload from this packet
             payload = np.frombuffer(fp.buffer.read(header['num_samples']*SAMPLE_WIDTH), dtype=np.uint16)
-            print(payload.shape)
-            print(chan.payload.shape)
+            #print(payload.shape)
+            #print(chan.payload.shape)
 
             # Write the payload at the relative offset within the numpy array
+            # XXX This will glitch if you try to give a rel_offset into a
+            #     block that is the block length you are writing
+            #     The firmware should never do this to you though...
             chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = payload
 
         # Give them back
@@ -197,7 +200,7 @@ class packetteRun(object):
         findex = key % numf
         index = math.floor(key / numf)
 
-        print("Looking up event %d, which should index to stream %d, offset %d" % (key, findex, index))
+        # print("Looking up event %d, which should index to stream %d, offset %d" % (key, findex, index))
         # Get the right one
         return self.eventlists[findex][index]
 
@@ -222,6 +225,14 @@ class packetteRun(object):
             self.eventlists.append(self.loadEvents(fp))
             print("packette_python: loaded %s" % fname, file=sys.stderr)
 
+        # Delete the file pointers so that we can pickle
+        del(self.fps)
+        
+    # Return the total number of events described by this run
+    def __len__(self):
+        return sum([len(l) for l in self.eventlists])
+
+    # An iterator to support list-like interaction
     def __iter__(self):
         return self.runIterator(self)
 
@@ -241,12 +252,7 @@ class packetteRun(object):
         
 # Testing stub
 events = packetteRun(['-'])
+print("Loaded %d events" % len(events))
 
-for event in events:
-    for chan, data in event.channels.items():
-        print("Event %d\nChannel: %d\nData: " % (event.event_num, chan))
-        print("drs4_stop: %d" % data.drs4_stop)
-        for datum in data:
-            print(datum)
-        
-        
+import pickle
+pickle.dump(events, open("pickedPacketteRun.dat", "wb"))

@@ -334,15 +334,21 @@ class packetteRun(object):
     def __setstate__(self, state):
         self.__dict__.update(state)
 
+        print("packette_stream.py: pickled run contains %d events backed by:" % len(self), file=sys.stderr)
         # Load the fps
         try:
-            for fname in fnames:
-                self.fps = {n : open(f, 'rb') for n,f in enumerate(fnames)}
+            for fname in self.fnames:
+                self.fps = {n : open(f, 'rb') for n,f in enumerate(self.fnames)}
+                print("\t%s" % fname,file=sys.stderr)
+                
         except FileNotFoundError as e:
             print("packette_stream.py: could not find one of the given files", file=sys.stderr)
 
         # Update the index
         self.updateIndex()
+
+        # Report
+        print("packette_stream.py: after update, run contains %d events" % len(self), file=sys.stderr)
         
     # Return the total number of events described by this run
     def __len__(self):
@@ -371,25 +377,29 @@ class packetteRun(object):
             
             self.i += 1
             return event
-        
+
 # Testing stub
-events = packetteRun(sys.argv[1:])
-print("Loaded %d events" % len(events))
+def test():
+    events = packetteRun(sys.argv[1:])
+    print("Loaded %d events" % len(events))
 
-import pickle
-pickle.dump(events, open("pickledPacketteRun.dat", "wb"))
+    import pickle
+    # pickle.dump(events, open("pickledPacketteRun.dat", "wb"))
 
-# # Now lets try some accesses
-# # Works
-# for event in events:
-#     for chan,data in event.channels.items():
-#         for datum in data:
-#             print("event %d, channel %d, datum: %d\n" % (event.event_num, chan, datum))
-import time
-time.sleep(5)
+    # # Now lets try some accesses
+    # # Works
+    # for event in events:
+    #     for chan,data in event.channels.items():
+    #         for datum in data:
+    #             print("event %d, channel %d, datum: %d\n" % (event.event_num, chan, datum))
+    import time
+    time.sleep(5)
 
-# Test an update
-events.updateIndex()
+    # Test an update
+    events.updateIndex()
 
-# Test the pickle
+    # Test the pickle
+    events = pickle.load(open("pickledPacketteRun.dat", "rb"))
+
+    
 

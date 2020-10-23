@@ -134,31 +134,22 @@ class packetteRun(object):
                     self.i += 1
                     return datum
 
-    def parseOffsets(self, fp, fname):
+    def parseOffsets(self, fp, fhandle, index):
         # This will index event byte boundaries in the underlying stream
         # Lookups can then be done by seeking in the underlying stream
         # Start loading in event data
         prev_event_num = -1
         offsetTable = {}
 
-        index = 0
-        
         while True:
 
-            # Grab a header
-            #try:
-            # To make sure we get binary if stdin is given
-            # use the underlying buffer
             header = fp.read(self.header_size)
             index += self.header_size
-            #except Exception as e:
-            #    print(e)
-            #    fp.close()
-            #    break
 
             # If we successfully read something, but it wasn't long enough to be a header,
             # we probably read EOF.
             if len(header) < packette_transport.size:
+                index -= self.header_size
                 break
 
             # Unpack it and make a dictionary out of it
@@ -178,7 +169,7 @@ class packetteRun(object):
             # This logic is being weird.  Be explicit
             if index == self.header_size or prev_event_num < header['event_num']:
                 # Return a tuple with the stream and the byte position within the stream
-                self.offsetTable[header['event_num']] = (self.fname_map[fname], index - self.header_size)
+                self.offsetTable[header['event_num']] = (fhandle, index - self.header_size)
                 prev_event_num = header['event_num']
                 
             # Increment the index by the size of this packet's payload
@@ -186,7 +177,10 @@ class packetteRun(object):
 
             # Seek this amount
             fp.seek(index)
-            
+
+        # Set the most recently successful read
+        self.fp_indexed[fhandle] = index
+        
         return offsetTable
 
     def loadEvent(self, event_num):
@@ -198,30 +192,28 @@ class packetteRun(object):
             # Wasn't in there
             pass
         
-        # Table lookup (use filenames so that we can pickle the offsetTable)
-        fname_index, offset = self.offsetTable[event_num]
+        # Table lookup
+        fhandle, offset = self.offsetTable[event_num]
 
         # Now get the fp
         try:
-            fp = self.fps[fname_index]
+            fp = self.fps[fhandle]
         except IndexError as e:
-            try:
-                fp = open(fname, "rb")
-                self.fps[fname_index] = fp
-            except FileNotFoundError as f:
-                fprintf(stderr,
-                        "packette_stream.py: could not find the backing file %s" % fname)
+            fprintf(stderr,
+                    "packette_stream.py: backing file %s was not loaded?" % self.fnames[fhandle])
                 
         # Go there
         fp.seek(offset)
 
+        event = None
+        
         # Load up the event
         while True:
 
             # Grab a header
             # To make sure we get binary if stdin is given
             # use the underlying buffer
-            header = fp.buffer.read(self.header_size)
+            header = fp.read(self.header_size)
             
             # If we successfully read something, but it wasn't long enough to be a header,
             # we probably read EOF.
@@ -232,8 +224,10 @@ class packetteRun(object):
             # Unpack it and make a dictionary out of it
             header = dict(zip(field_list, packette_transport.unpack(header)))
 
-            # Remember where we are at
-            prev_event_num = header['event_num']
+            if event is None:
+                # Remember where we are at
+                prev_event_num = header['event_num']
+                event = self.packetteEvent(header)
             
             # If we've read past the event, return the completed event
             if prev_event_num < header['event_num']:
@@ -247,11 +241,20 @@ class packetteRun(object):
                 # Replace the empty with a properly sized numpy array
                 chan.drs4_stop = header['drs4_stop']
                 chan.payload = np.zeros(header['total_samples'])
+
+            # Now, since the underlying stream may be growing, we might have gotten a header
+            # but we don't have enough underlying data to finish out the event here
+            capacitors = fp.read(header['num_samples']*SAMPLE_WIDTH)
+            
+            # Verify that we *got* this amount
+            if not len(capacitors) == header['num_samples']*SAMPLE_WIDTH:
+
+                # We didn't get this payload yet, that's fine.
+                # It'll work on the next read.
+                break
                 
             # Read the payload from this packet
-            payload = np.frombuffer(fp.buffer.read(header['num_samples']*SAMPLE_WIDTH), dtype=np.uint16)
-            #print(payload.shape)
-            #print(chan.payload.shape)
+            payload = np.frombuffer(capacitors, dtype=np.uint16)
 
             # Write the payload at the relative offset within the numpy array
             # XXX This will glitch if you try to give a rel_offset into a
@@ -269,88 +272,11 @@ class packetteRun(object):
         # Return this event
         return event
     
-    def loadAllEvents(self, fp):
-        # Start loading in event data
-        prev_event_num = -1
-        event = None
-        events = []
-        
-        while True:
-
-            # Grab a header
-            try:
-                # To make sure we get binary if stdin is given
-                # use the underlying buffer
-                header = fp.buffer.read(self.header_size)
-            except Exception as e:
-                print(e)
-                fp.close()
-                break
-
-            # If we successfully read something, but it wasn't long enough to be a header,
-            # we probably read EOF.
-            if len(header) < packette_transport.size:
-                break
-
-            # Unpack it and make a dictionary out of it
-            header = dict(zip(field_list, packette_transport.unpack(header)))
-
-            # print(header)
-
-            # Are we looking at the same board?
-            if self.board_id is None:
-                self.board_id = header['board_id']
-            elif not self.board_id == header['board_id']:
-                raise Exception("ERROR: Heterogenous board identifiers in multifile event stream.\n " \
-                                "\tOutput from different boards should be directed to\n " \
-                                "\tdistinct packette instances on disjoint port ranges")
-
-            # This logic is being weird.  Be explicit
-            if event is None or prev_event_num < header['event_num']:
-                # Make one and add it
-                event = self.packetteEvent(header)
-                prev_event_num = header['event_num']
-                events.append(event)                
-                
-            # Populate the channel data from this transport packet
-            chan = event.channels[header['channel']]
-            
-            # Is this the first data for this channel? 
-            if len(chan) == 0:
-                # Replace the empty with a properly sized numpy array
-                chan.drs4_stop = header['drs4_stop']
-                chan.payload = np.zeros(header['total_samples'])
-                
-            # Read the payload from this packet
-            payload = np.frombuffer(fp.buffer.read(header['num_samples']*SAMPLE_WIDTH), dtype=np.uint16)
-            #print(payload.shape)
-            #print(chan.payload.shape)
-
-            # Write the payload at the relative offset within the numpy array
-            # XXX This will glitch if you try to give a rel_offset into a
-            #     block that is the block length you are writing
-            #     The firmware should never do this to you though...
-            chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = payload
-
-        # Give them back
-        return events
-    
-    # Deinterlace the request
     def __getitem__(self, key):
-
-        if self.osbacked:
-            return self.loadEvent(key)
-        else:
-            numf = len(self.fnames)
-            findex = key % numf
-            index = math.floor(key / numf)
-
-            # print("Looking up event %d, which should index to stream %d, offset %d" % (key, findex, index))
-            # Get the right one
-            return self.eventlists[findex][index]
-
+        return self.loadEvent(key)
+        
     # Initialize and load the files
-    def __init__(self, fnames, osbacked=False):
+    def __init__(self, fnames):
 
         # NOTE: fnames is assumed to be sorted in the order you want to deinterlace in!
         # Check for stdin
@@ -359,33 +285,46 @@ class packetteRun(object):
         self.eventlists = []
         self.offsetTable = {}
         self.eventCache = OrderedDict()
-        self.osbacked = osbacked
         self.fnames = fnames
-    
         self.fps = {}
+        self.fp_indexed = {}
         
         if fnames == ['-']:
-            if osbacked:
-                raise Exception("Cannot seek on stdin.  Take data to a backing file first if you'd like to seek")
-            
-            self.fps['-'] = sys.stdin
-        else:
-            self.fps = { f : open(f, 'rb') for f in fnames}
+            raise Exception("Cannot seek on stdin.  Take data to a backing file first if you'd like to seek")
 
-        # Make the fname_map, so we can store integers instead of filenames a bazillion times
-        self.fname_map = { f : n for n,f in enumerate(fnames) }
+        # This stores integer handles to file pointers that back the event data
+        self.fps = { n : open(f, 'rb') for n,f in enumerate(fnames)}
+
+        # This stores the most recent position where a header read failed
+        # (used to update the index on the fly)
+        self.fp_indexed = { n : 0 for n in range(len(fnames))}
         
         # See if we keep the data on the HD/inside OS buffers
-        if osbacked:
-            for fname,fp in self.fps.items():
-                self.offsetTable.update(self.parseOffsets(fp, fname))
-                print("packette_stream.py: built event index for %s" % fname, file=sys.stderr)
-        else:
-            # Load up a bunch of interleaved events
-            for fname,fp in self.fps.items():
-                self.eventlists.append(self.loadAllEvents(fp))
-                print("packette_python: loaded %s" % fname, file=sys.stderr)
+        for fhandle,fp in self.fps.items():
 
+            # Didn't seem to work...
+            # Make sure we get the most recent jazz
+            # os.fsync(fp.fileno())
+
+            # Send it the 0 index, since this is the first time we are building the index
+            self.offsetTable.update(self.parseOffsets(fp, fhandle, 0))
+            print("packette_stream.py: built event index for %s" % fnames[fhandle], file=sys.stderr)
+
+    # For underlying streams that are growing, we can update the index
+    def updateIndex(self):
+        # Start parsing offsets at the last successful spot
+        for fhandle,fp in self.fps.items():
+            print("packette_stream.py: syncing OS buffers for %s..." % self.fnames[fhandle],
+                  file=sys.stderr)
+
+            # Didn't seem to work...
+            # Make sure we get the most recent jazz
+            # os.fsync(fp.fileno())
+            
+            print("packette_stream.py: resuming indexing of %s at byte position %d..." % (self.fnames[fhandle], self.fp_indexed[fhandle]),
+                  file=sys.stderr)
+            self.parseOffsets(fp, fhandle, self.fp_indexed[fhandle])
+    
     # So that pickling and unpickling works with file-backed imlementations
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -398,16 +337,16 @@ class packetteRun(object):
         # Load the fps
         try:
             for fname in fnames:
-                self.fps = {f : open(f, 'rb') for f in fnames}
+                self.fps = {n : open(f, 'rb') for n,f in enumerate(fnames)}
         except FileNotFoundError as e:
             print("packette_stream.py: could not find one of the given files", file=sys.stderr)
-            
+
+        # Update the index
+        self.updateIndex()
+        
     # Return the total number of events described by this run
     def __len__(self):
-        if self.osbacked:
-            return len(self.offsetTable)
-        else:
-            return sum([len(l) for l in self.eventlists])
+        return len(self.offsetTable)
 
     # An iterator to support list-like interaction
     def __iter__(self):
@@ -417,10 +356,16 @@ class packetteRun(object):
         def __init__(self, run):
             self.run = run
             self.i = 0
+            self.offsetIterator = iter(run.offsetTable.items())
 
         def __next__(self):
+
+            # We'll need an enumeration of the offsetTable to go
+            # through events in order
             try:
-                event = self.run[self.i]
+                event_num, whatever = self.offsetIterator.__next__()
+                print(event_num, whatever)
+                event = self.run[event_num]
             except IndexError as e:
                 raise StopIteration
             
@@ -428,16 +373,23 @@ class packetteRun(object):
             return event
         
 # Testing stub
-events = packetteRun(sys.argv[1:], osbacked='True')
+events = packetteRun(sys.argv[1:])
 print("Loaded %d events" % len(events))
 
 import pickle
 pickle.dump(events, open("pickledPacketteRun.dat", "wb"))
 
-print(events.offsetTable)
+# # Now lets try some accesses
+# # Works
+# for event in events:
+#     for chan,data in event.channels.items():
+#         for datum in data:
+#             print("event %d, channel %d, datum: %d\n" % (event.event_num, chan, datum))
+import time
+time.sleep(5)
 
-# Now lets try some accesses
-for event in events:
-    for chan,data in event.channels.items():
-        for datum in data:
-            print("event %d, channel %d, payload:\n" % (event.event_num, chan, datum))
+# Test an update
+events.updateIndex()
+
+# Test the pickle
+

@@ -80,4 +80,4 @@ while True:
     a_packette['event_num'] += 2
     
     # Sleep
-    # time.sleep(0.00001)
+    time.sleep(1)

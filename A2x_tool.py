@@ -11,15 +11,16 @@ import queue
 import socket
 import time
 
-import lappdTool
+import A2x_common
 
 # Make a new tool
-parser = lappdTool.create('Generic configuration tool for Ultralytics A2x series LAPPD boards.')
+parser = A2x_common.create('Generic configuration tool for Ultralytics A2x series LAPPD boards.')
 
 # Custom args
 parser.add_argument('-r', '--register', dest='registers', metavar='REGISTER', type=str, nargs=1, action='append', help='Peek and document the given register')
 
-args = parser.parse_args()
+# Connect to the board
+ifc, args = A2x_common.connect(parser)
 
 # Simple sanity check
 if args.i < 0:

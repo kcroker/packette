@@ -11,6 +11,7 @@ import queue
 import socket
 import time
 
+import lappdIfc
 import A2x_common
 
 # Make a new tool

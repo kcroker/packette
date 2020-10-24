@@ -406,6 +406,17 @@ void flagInterrupt(int signum) {
 #define L2_CACHE 256000
 #define TIMEOUT 1
 
+// For runtime selectable packet processing pipeline
+const unsigned char num_processor_ptrs = 3;
+const char *processor_names[] = { "ordered_processor", "disordered_processor", "debug_processor" };
+const unsigned long (*processor_ptrs[])(void *buf,
+					struct mmsghdr *msgs,
+					int vlen,
+					FILE *ordered_file,
+					FILE *orphan_file,
+					uint64_t *prev_seqnum,
+					uint32_t *prev_event_num) = {&order_processor, &abandonment_processor, &debug_processor};
+
 int main(int argc, char **argv) {
 
   // Socket stuff
@@ -433,6 +444,7 @@ int main(int argc, char **argv) {
   unsigned short port;
   char *addr_str;
   unsigned int count;
+  unsigned char packet_processor;
   
   // Signal handling stuff
   struct sigaction new_action, old_action;
@@ -464,14 +476,15 @@ int main(int argc, char **argv) {
   tmp1[0] = 0x0;
   ordered_file = 0x0;
   count = 0;
-
+  packet_processor = 0;
+  
   // Things for event counting
   prev_event_num = 0;
   stash = -1;
   
   /////////////////// ARGUMENT PARSING //////////////////
   
-  while ((opt = getopt(argc, argv, "t:p:f:on:")) != -1) {
+  while ((opt = getopt(argc, argv, "t:p:f:on:d:")) != -1) {
     switch (opt) {
     case 't':
       children = atoi(optarg);
@@ -485,12 +498,19 @@ int main(int argc, char **argv) {
     case 'o':
       ordered_file = stdout;
       break;
+    case 'd':
+      packet_processor = atoi(optarg);
+      if(packet_processor >= num_processor_ptrs) {
+	fprintf(stderr, "ERROR: Unknown packet processor %d\n", packet_processor);
+	exit(EXIT_FAILURE);
+      }
+      break;
     case 'n':
       // We add one here so that we can bypass on 0
       count = atoi(optarg) + 1;
       break;
     default: /* '?' */
-      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-f output file prefix] [-o dump to standard out] [-n event count] BIND_ADDRESS\n",
+      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-f output file prefix] [-o dump to standard out] [-n event count] [-d debug select] BIND_ADDRESS\n",
 	      argv[0]);
       exit(EXIT_FAILURE);
     }
@@ -540,7 +560,7 @@ int main(int argc, char **argv) {
   ///////////////// PARSING COMPLETE ///////////////////
   
   // Set the initial packet processing pointer to the preprocessor
-  process_packets_fptr = &order_processor;
+  process_packets_fptr = processor_ptrs[packet_processor];
 
   // Now compute the optimal vlen via truncated idiv
   vlen = L2_CACHE / BUFSIZE;
@@ -654,7 +674,7 @@ int main(int argc, char **argv) {
     prev_seqnum = 0;
     
     ////////////////// STREAMS //////////////////
-       	    
+    
     // Open streams for output
     if(!ordered_file) {
       

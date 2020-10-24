@@ -117,12 +117,7 @@ def connect(parser):
         mysteryReg = ifc.brd.peeknow(0x370)
         ifc.brd.pokenow(0x370, mysteryReg | (1 << 5))
 
-    # Make a good (useful?) filename
-    if args.file:
-        import datetime
-        args.file = "%s_%s" % (args.file, datetime.datetime.now().strftime("%d%m%Y-%H%M%S"))
-
-    # Return a tuble with the interface and the arguments
+   # Return a tuble with the interface and the arguments
     return (ifc, args)
 
 #

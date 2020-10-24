@@ -52,7 +52,7 @@ field_list = ['board_id',
 
 # Sample width should be defined universally somwhere
 SAMPLE_WIDTH = 2
-NO_DATA = -1
+NOT_DATA = 0x4
 
 # Stuff for packette_stream.py
 # (Caching so if you are browsing around between events, they stay in memory)
@@ -115,7 +115,7 @@ class packetteRun(object):
                 if i < len(self):
                     return self.payload[i]
                 else:
-                    return NO_DATA
+                    return NOT_DATA
 
             def __iter__(self):
                 return self.channelIterator(self)
@@ -285,6 +285,11 @@ class packetteRun(object):
         self.eventlists = []
         self.offsetTable = {}
         self.eventCache = OrderedDict()
+
+        # We usually expect lists.  If its a one off, wrap it in a list
+        if not isinstance(fnames, list):
+            fnames = [fnames]
+        
         self.fnames = fnames
         self.fps = {}
         self.fp_indexed = {}
@@ -292,6 +297,7 @@ class packetteRun(object):
         if fnames == ['-']:
             raise Exception("Cannot seek on stdin.  Take data to a backing file first if you'd like to seek")
 
+            
         # This stores integer handles to file pointers that back the event data
         self.fps = { n : open(f, 'rb') for n,f in enumerate(fnames)}
 

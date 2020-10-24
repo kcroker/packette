@@ -524,12 +524,12 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
     
-    fprintf(stderr, "packette (parent): dumping to stdout...\n");
+    fprintf(stderr, "packette (parent): Dumping to stdout...\n");
   }
 
   // Now grab mandatory positional arguments
   if(optind >= argc) {
-    fprintf(stderr, "Expected bind address after options\n");
+    fprintf(stderr, "ERRROR: Expected bind address after options\n");
     exit(EXIT_FAILURE);
   }
 
@@ -552,16 +552,18 @@ int main(int argc, char **argv) {
   // Report how many packets
   if(!count) 
     fprintf(stderr,
-	    "packette (parent): each child will listen until terminated with Ctrl+C\n");
+	    "packette (parent): Children will listen until terminated with Ctrl+C\n");
   else
     fprintf(stderr,
-	    "packette (parent): each child will receive data from %d events and then terminate\n", count - 1);
+	    "packette (parent): Children will receive data from %d events and then terminate\n", count - 1);
 
   ///////////////// PARSING COMPLETE ///////////////////
   
   // Set the initial packet processing pointer to the preprocessor
   process_packets_fptr = processor_ptrs[packet_processor];
-
+  fprintf(stderr,
+	  "packette (parent): Children will process packets with the %s\n", processor_names[packet_processor]);
+  
   // Now compute the optimal vlen via truncated idiv
   vlen = L2_CACHE / BUFSIZE;
   fprintf(stderr,

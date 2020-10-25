@@ -22,7 +22,7 @@ parser.add_argument('datafile', metavar='DATA',type=str, help='Read board output
 ifc, args = A2x_common.connect(parser)
 
 # Open up the events
-events = packette_stream.packetteRun(args.datafile)
+events = packette.packetteRun(args.datafile)
 
 # Tell the user what we are dusering
 print("# CMOFS: %f\n# TCAL_low: %f\n# TCAL_high: %f\n# ROFS: %f" % (args.cmofs, args.low, args.high, args.rofs))
@@ -31,8 +31,8 @@ event_boundaries = []
 
 for voltage in (args.low, args.high):
     # Set the low value
-    ifc.DacSetVout(lappdTool.DAC_TCAL_N1, voltage)
-    ifc.DacSetVout(lappdTool.DAC_TCAL_N2, voltage)
+    ifc.DacSetVout(ifc.DACOUTS['TCAL_N1'], voltage)
+    ifc.DacSetVout(ifc.DACOUTS['TCAL_N2'], voltage)
 
     # Give some output
     print("Receiving data for TCAL_N = %f" % voltage, file=sys.stderr)

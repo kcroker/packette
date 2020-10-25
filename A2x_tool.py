@@ -7,8 +7,9 @@ import queue
 import socket
 import time
 
-import lappdIfc
 import A2x_common
+import lappdIfc
+
 
 # Make a new tool
 parser = A2x_common.create('Generic configuration tool for Ultralytics A2x series LAPPD boards.')

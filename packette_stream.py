@@ -94,7 +94,29 @@ class packetteRun(object):
                 self.drs4_stop = drs4_stop
                 self.payload = payload
                 self.run = run
+                self.resetMask()
 
+            # Masking allows you to ignore certain troublesome regions
+            # Masks are always in SCA view.
+            def mask(self, low, high):
+                span = high - low
+                if span < 0:
+                    raise ValueError("Requested mask is backwards")
+
+                # Set the mask
+                self.sca_mask[low:high] = np.repeat(0, span)
+
+            def unmask(self, low, high):
+                span = high - low
+                if span < 0:
+                    raise ValueError("Requested unmask is backwards")
+
+                # Set the mask
+                self.sca_mask[low:high] = np.repeat(1, span)
+
+            def resetMask(self):
+                self.sca_mask = np.repeat(1, len(self))
+                
             # Length
             def __len__(self):
                 return len(self.payload)
@@ -108,19 +130,26 @@ class packetteRun(object):
                 if key < 0 or key > 1024:
                     raise IndexError("key lies outside of DRS4 switched cap array")
 
-                # Relative view
-                # Get the offset into the data we have
+                # The data is described relative to the drs4_offset, which is absolute in position
                 if not self.run.SCAView:
+                    # key = 0 corresponds to the stop sample, so this is *time ordered*
                     i = (self.drs4_stop + key) & 1023
                 else:
+                    # key = 0 corresponds to the absolute zero, so this is *capacitor ordered*
                     i = key
 
                 # Return the data if its there
-                if i < len(self):
+                if i < len(self) and self.sca_mask[i]:
                     return self.payload[i]
                 else:
                     return NOT_DATA
 
+            # Dump the channel stop, mask, and contents
+            def __str__(self):
+                return "drs4_stop: %d\n" \
+                    "sca_mask:\n%s\n" \
+                    "payload:\n%s\n" % (self.drs4_stop, self.sca_mask, self.payload) 
+                
             def __iter__(self):
                 return self.channelIterator(self)
 
@@ -194,7 +223,7 @@ class packetteRun(object):
     # Capacitor ordered views return capacitor 0 when requesting index 0
     def setSCAView(self, flag):
         self.SCAView = flag
-        
+                
     def loadEvent(self, event_num):
 
         # First check cache
@@ -254,6 +283,9 @@ class packetteRun(object):
                 chan.drs4_stop = header['drs4_stop']
                 chan.payload = np.zeros(header['total_samples'])
 
+                # Add a 5 sample symmetric mask around the stop sample
+                chan.mask(header['drs4_stop'] - 5, header['drs4_stop'] + 5)
+                
             # Now, since the underlying stream may be growing, we might have gotten a header
             # but we don't have enough underlying data to finish out the event here
             capacitors = fp.read(header['num_samples']*SAMPLE_WIDTH)
@@ -407,7 +439,7 @@ def test():
     print("Loaded %d events" % len(events))
 
     import pickle
-    # pickle.dump(events, open("pickledPacketteRun.dat", "wb"))
+    pickle.dump(events, open("pickledPacketteRun.dat", "wb"))
 
     # Now lets try some accesses
     # Works
@@ -423,15 +455,12 @@ def test():
     # Switch to capacitor view
     events.setSCAView(True)
 
-    # What's it look like now?
+    # Look at it using native dumps
     for event in events:
         for chan,data in event.channels.items():
             print("event %d, channel %d\n" % (event.event_num, chan))
-            for n, datum in enumerate(data):
-                if (n & 15) == 15:
-                    print("")
-                print("%4d " % datum, end='')
-
+            print(data)
+            
     print('')
     
     # import time
@@ -446,5 +475,5 @@ def test():
 
     
 # Invoke it
-# test()    
+test()    
 

@@ -27,8 +27,8 @@ def pedestalAccumulator(fname):
 
     global chans
 
-    # Open the packette run
-    events = packette.packetteRun(fname)
+    # Open the packette run (with view set to capacitor ordering)
+    events = packette.packetteRun(fname, SCAView=True)
 
     # Iterate through it
     for event in events:

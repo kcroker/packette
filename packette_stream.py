@@ -309,8 +309,7 @@ class packetteRun(object):
         self.fp_indexed = {}
         
         if fnames == ['-']:
-            raise Exception("Cannot seek on stdin.  Take data to a backing file first if you'd like to seek")
-
+            raise Exception("Cannot seek on stdin.  Start taking data to a backing file, and specify that file to work in real-time")
             
         # This stores integer handles to file pointers that back the event data
         self.fps = { n : open(f, 'rb') for n,f in enumerate(fnames)}

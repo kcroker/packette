@@ -4,7 +4,6 @@ import sys
 import time
 
 import packette_stream as packette
-from packette_pedestal import pedestal
 
 import A2x_common
 
@@ -21,8 +20,8 @@ parser.add_argument('datafile', metavar='DATA',type=str, help='Read board output
 # Handle common configuration due to the common arguments
 ifc, args = A2x_common.connect(parser)
 
-# Open up the events
-events = packette.packetteRun(args.datafile)
+# Open up the events (set the view to capacitor ordering)
+events = packette.packetteRun(args.datafile, SCAView=True)
 
 # Tell the user what we are dusering
 print("# CMOFS: %f\n# TCAL_low: %f\n# TCAL_high: %f\n# ROFS: %f" % (args.cmofs, args.low, args.high, args.rofs))
@@ -38,7 +37,7 @@ for voltage in (args.low, args.high):
     print("Receiving data for TCAL_N = %f" % voltage, file=sys.stderr)
 
     k = args.N
-    # Take N samples at both low and high
+    # Request N samples at both low and high
     while k > 0:
         # Wait for it to settle
         time.sleep(args.i)
@@ -52,14 +51,9 @@ for voltage in (args.low, args.high):
     events.updateIndex()
 
     # Remember how many events we got, since these events correspond
-    # to these values in the curve
+    # to these values in the curve (we might not have received all N samples)
     event_count[voltage] = len(events)
     
-# For the analysis, we need SCA view
-events.setSCAView(True)
-
-print(event_count)
-
 # The slope denominator
 run = args.high - args.low
 

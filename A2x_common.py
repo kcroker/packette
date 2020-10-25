@@ -51,15 +51,6 @@ def create(leader):
     
     return parser
 
-# DAC Channel mappings (in A21 crosshacked)
-# (these should be moved to lappdIfc.py)
-DAC_BIAS = 0
-DAC_ROFS = 1
-DAC_OOFS = 2
-DAC_CMOFS = 3
-DAC_TCAL_N1 = 4
-DAC_TCAL_N2 = 5
-
 ifc = None
 
 def connect(parser):
@@ -82,6 +73,15 @@ def connect(parser):
     # Give the socket address for use by spawn()
     ifc.brd.aimNBIC(port=args.aim)
     args.listen = ifc.brd.s.getsockname()[0]
+
+    # DAC Channel mappings (in A21 crosshacked)
+    # (these should be moved to lappdIfc.py)
+    DAC_BIAS = 0
+    DAC_ROFS = 1
+    DAC_OOFS = 2
+    DAC_CMOFS = 3
+    DAC_TCAL_N1 = 4
+    DAC_TCAL_N2 = 5
 
     # Set DAC voltages
     ifc.DacSetVout(DAC_OOFS, args.oofs)

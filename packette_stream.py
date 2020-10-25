@@ -66,9 +66,9 @@ class packetteRun(object):
     # These are backed by numpy arrays, but support indexing beyond the present data
     class packetteEvent(object):
 
-        def __init__(self, header):
+        def __init__(self, header, run):
             self.channels = {}
-
+            self.run = run
             self.event_num = header['event_num']
             self.trigger_low = header['trigger_low']
             
@@ -78,7 +78,7 @@ class packetteRun(object):
                 # print("mask: %x, channel: %d" % (header['channel_mask'], chan))
                 
                 if header['channel_mask'] & 0x1:
-                    self.channels[chan] = self.packetteChannel(0, np.empty([0], dtype=np.uint16))
+                    self.channels[chan] = self.packetteChannel(0, np.empty([0], dtype=np.uint16), self.run)
 
                 # Advance to the next place in the mask
                 header['channel_mask'] >>= 1
@@ -90,9 +90,10 @@ class packetteRun(object):
         class packetteChannel(object):
 
             # data is a numpy array
-            def __init__(self, drs4_stop, payload):
+            def __init__(self, drs4_stop, payload, run):
                 self.drs4_stop = drs4_stop
                 self.payload = payload
+                self.run = run
 
             # Length
             def __len__(self):
@@ -109,7 +110,10 @@ class packetteRun(object):
 
                 # Relative view
                 # Get the offset into the data we have
-                i = (self.drs4_stop + key) & 1023
+                if not self.run.SCAView:
+                    i = (self.drs4_stop + key) & 1023
+                else:
+                    i = key
 
                 # Return the data if its there
                 if i < len(self):
@@ -183,6 +187,11 @@ class packetteRun(object):
         
         return offsetTable
 
+    # Time ordered views return capacitor DRS4_STOP when requesting index 0
+    # Capacitor ordered views return capacitor 0 when requesting index 0
+    def setSCAView(self, flag):
+        self.SCAView = flag
+        
     def loadEvent(self, event_num):
 
         # First check cache
@@ -227,7 +236,7 @@ class packetteRun(object):
             if event is None:
                 # Remember where we are at
                 prev_event_num = header['event_num']
-                event = self.packetteEvent(header)
+                event = self.packetteEvent(header, self)
             
             # If we've read past the event, return the completed event
             if prev_event_num < header['event_num']:
@@ -276,7 +285,7 @@ class packetteRun(object):
         return self.loadEvent(key)
         
     # Initialize and load the files
-    def __init__(self, fnames):
+    def __init__(self, fnames, SCAView=False):
 
         # NOTE: fnames is assumed to be sorted in the order you want to deinterlace in!
         # Check for stdin
@@ -286,6 +295,8 @@ class packetteRun(object):
         self.offsetTable = {}
         self.eventCache = OrderedDict()
 
+        self.SCAView = SCAView
+        
         # We usually expect lists.  If its a one off, wrap it in a list
         if not isinstance(fnames, list):
             fnames = [fnames]
@@ -376,7 +387,6 @@ class packetteRun(object):
             # through events in order
             try:
                 event_num, whatever = self.offsetIterator.__next__()
-                print(event_num, whatever)
                 event = self.run[event_num]
             except IndexError as e:
                 raise StopIteration
@@ -392,20 +402,42 @@ def test():
     import pickle
     # pickle.dump(events, open("pickledPacketteRun.dat", "wb"))
 
-    # # Now lets try some accesses
-    # # Works
-    # for event in events:
-    #     for chan,data in event.channels.items():
-    #         for datum in data:
-    #             print("event %d, channel %d, datum: %d\n" % (event.event_num, chan, datum))
-    import time
-    time.sleep(5)
+    # Now lets try some accesses
+    # Works
+    for event in events:
+        for chan,data in event.channels.items():
+            print("event %d, channel %d\n" % (event.event_num, chan))
+            for n, datum in enumerate(data):
+                if (n & 15) == 15:
+                    print("")
+                print("%4d " % datum, end='')
+    print('')
+    
+    # Switch to capacitor view
+    events.setSCAView(True)
 
-    # Test an update
-    events.updateIndex()
+    # What's it look like now?
+    for event in events:
+        for chan,data in event.channels.items():
+            print("event %d, channel %d\n" % (event.event_num, chan))
+            for n, datum in enumerate(data):
+                if (n & 15) == 15:
+                    print("")
+                print("%4d " % datum, end='')
 
-    # Test the pickle
-    events = pickle.load(open("pickledPacketteRun.dat", "rb"))
+    print('')
+    
+    # import time
+    # time.sleep(5)
+
+    # # Test an update
+    # events.updateIndex()
+
+    # # Test the pickle
+    # events = pickle.load(open("pickledPacketteRun.dat", "rb"))
+    # print("Loaded %d events" % len(events))
 
     
+# Invoke it
+test()    
 

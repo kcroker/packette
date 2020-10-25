@@ -2,10 +2,6 @@
 import sys
 import os
 
-# Do not ask me why this needs to be included now...
-sys.path.append("./eevee")
-os.environ['EEVEE_SRC_PATH'] = "./eevee"
-
 import pickle
 import queue
 import socket
@@ -49,16 +45,6 @@ human_readable = {
     4 : 'tcal_n1',
     5 : 'tcal_n2'
 }
-
-print("# Standard and custom registers at run start:")
-for i in range(0,6):
-    reg = 0x1020 + i*4
-
-    # DAC levels are shadowed.
-    # So I have to read twice.
-    ifc.brd.peeknow(reg)
-    val = ifc.brd.peeknow(reg)
-    print("#\t%s (%s) = %.02fV" % (human_readable[i], hex(reg), (2.5*val/0xffff)))
     
 human_readable = {
     lappdIfc.DRSREFCLKRATIO : 'DRSREFCLKRATIO',

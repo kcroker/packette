@@ -145,6 +145,9 @@ class packetteRun(object):
         prev_event_num = -1
         offsetTable = {}
 
+        # Yikes, forgot to do the initial seek
+        fp.seek(index)
+        
         while True:
 
             header = fp.read(self.header_size)
@@ -336,10 +339,15 @@ class packetteRun(object):
 
             # Didn't seem to work...
             # Make sure we get the most recent jazz
-            # os.fsync(fp.fileno())
+            os.fsync(fp.fileno())
+
+            # Force a seek to the end
+            fp.seek(-1,2)
             
             print("packette_stream.py: resuming indexing of %s at byte position %d..." % (self.fnames[fhandle], self.fp_indexed[fhandle]),
                   file=sys.stderr)
+
+            # This will seek from where we previously left off
             self.parseOffsets(fp, fhandle, self.fp_indexed[fhandle])
     
     # So that pickling and unpickling works with file-backed imlementations
@@ -439,5 +447,5 @@ def test():
 
     
 # Invoke it
-test()    
+# test()    
 

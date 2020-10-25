@@ -2,9 +2,13 @@
 
 import argparse
 import multiprocessing
-from os import kill
+from os import kill,environ
 from signal import SIGINT
-from sys import stderr
+import sys
+
+# Do not ask me why this needs to be included now...
+sys.path.append("./eevee")
+environ['EEVEE_SRC_PATH'] = "./eevee"
 
 import lappdIfc
 
@@ -94,7 +98,7 @@ def connect(parser):
     # Set the channels?
     if args.channels:
         chans = list(map(int, args.channels.split()))
-        print("Specifying channels: ", chans, file=stderr)
+        print("Specifying channels: ", chans, file=sys.stderr)
 
         high = 0
         low = 0
@@ -110,7 +114,7 @@ def connect(parser):
     # Set the wait?
     if args.wait:
         ifc.brd.pokenow(lappdIfc.DRSWAITSTART, args.wait)
-        print("Setting STOP delay to: %d" % args.wait, file=stderr)
+        print("Setting STOP delay to: %d" % args.wait, file=sys.stderr)
 
     # Enable the external trigger if it was requested
     if args.external:

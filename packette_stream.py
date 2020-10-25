@@ -342,7 +342,7 @@ class packetteRun(object):
             os.fsync(fp.fileno())
 
             # Force a seek to the end
-            fp.seek(-1,2)
+            fp.seek(0,2)
             
             print("packette_stream.py: resuming indexing of %s at byte position %d..." % (self.fnames[fhandle], self.fp_indexed[fhandle]),
                   file=sys.stderr)

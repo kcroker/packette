@@ -102,8 +102,11 @@ class packetteRun(object):
                 self.drs4_stop = drs4_stop
                 self.payload = payload
                 self.run = run
+                # Now, make a full array view for fast access
+                self.cachedView = np.empty([1024], dtype=np.uint16)
+                self.cacheValid = False
                 self.resetMask()
-
+                
             # Masking allows you to ignore certain troublesome regions
             # Masks are always in SCA view.
             def mask(self, low, high):
@@ -151,6 +154,10 @@ class packetteRun(object):
             # Return the data if its there, otherwise return NO_DATA
             def __getitem__(self, i):
 
+                # If cache is valid, return directly
+                if self.cacheValid:
+                    return self.cachedView[i]
+                
                 # Support slicing (looks slow as balls)
                 if isinstance(i, slice):
                     start, stop, step = i.indices(1024)
@@ -217,7 +224,8 @@ class packetteRun(object):
 
                 return ("drs4_stop: %d\n" \
                         "len(payload): %d\n" \
-                        "sca_mask:\n%s\n" % (self.drs4_stop, len(self), msg))
+                        "cacheValid: %s\n" \
+                        "sca_mask:\n%s\n" % (self.drs4_stop, len(self), self.cacheValid, msg))
 
             # A human-readable view of the array state
             def debugChannel(self, width=3):
@@ -229,6 +237,17 @@ class packetteRun(object):
 
                 return msg
 
+            def buildCache(self):
+
+                # Invalidate the cache
+                self.cacheValid = False
+                
+                # Reconstruct it
+                self.cachedView = self[0:1024]
+
+                # Now always pull from cache
+                self.cacheValid = True
+                    
             def __iter__(self):
                 return self.channelIterator(self)
 
@@ -384,6 +403,10 @@ class packetteRun(object):
             #     The firmware should never do this to you though...
             chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = payload
 
+        # Now we've loaded all the payloads, build the cache
+        for data in event.channels.values():
+            data.buildCache()
+            
         # Add this event to the cache, removing something if necessary
         self.eventCache[event.event_num] = event
 

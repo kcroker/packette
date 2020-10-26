@@ -46,9 +46,9 @@ a_packette['event_num'] = 7
 a_packette['trigger_low'] = 12345
 a_packette['channel_mask'] = 0x00000000000000011
 
-a_packette['num_samples'] = 128
+a_packette['num_samples'] = 67
 a_packette['channel'] = 4
-a_packette['total_samples'] = 128
+a_packette['total_samples'] = 67
 a_packette['drs4_stop'] = 126
 
 payload = np.array(range(a_packette['num_samples']), dtype=np.uint16).tobytes()

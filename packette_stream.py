@@ -99,23 +99,42 @@ class packetteRun(object):
             # Masking allows you to ignore certain troublesome regions
             # Masks are always in SCA view.
             def mask(self, low, high):
-                span = high - low
-                if span < 0:
-                    raise ValueError("Requested mask is backwards")
 
-                # Set the mask
-                self.sca_mask[low:high] = np.repeat(0, span)
+                if low < 0:
+                    low += 1024
+                
+                high = (high + 1024) & 1023
 
+                # Wrap around
+                if low > high:
+                    for i in range(low, 1023):
+                        self.sca_mask[i >> 3] &= ~(0x80 >> (i & 7))
+                    for i in range(0, high):
+                        self.sca_mask[i >> 3] &= ~(0x80 >> (i & 7))
+                else:
+                    for i in range(low, high):
+                        self.sca_mask[i >> 3] &= ~(0x80 >> (i & 7))
+                        
             def unmask(self, low, high):
-                span = high - low
-                if span < 0:
-                    raise ValueError("Requested unmask is backwards")
 
-                # Set the mask
-                self.sca_mask[low:high] = np.repeat(1, span)
+                if low < 0:
+                    low += 1024
+                
+                high = (high + 1024) & 1023
+
+                # Wrap around
+                if low > high:
+                    for i in range(low, 1023):
+                        self.sca_mask[i >> 3] |= (0x80 >> (i & 7))
+                    for i in range(0, high):
+                        self.sca_mask[i >> 3] |= (0x80 >> (i & 7))
+                else:
+                    for i in range(low, high):
+                        self.sca_mask[i >> 3] |= (0x80 >> (i & 7))
+                        
 
             def resetMask(self):
-                self.sca_mask = np.repeat(1, len(self))
+                self.sca_mask = bytearray([0xff for i in range(1024 >> 3)])
                 
             # Length
             def __len__(self):
@@ -124,31 +143,76 @@ class packetteRun(object):
             # Return the data if its there, otherwise return NO_DATA
             def __getitem__(self, key):
 
-                if not isinstance(key, int):
-                    raise IndexError("key must be an integer")
+                # Support slicing (looks slow as balls)
+                if isinstance(key, slice):
+                    start, stop, step = key.indices(1024)
 
-                if key < 0 or key > 1024:
-                    raise IndexError("key lies outside of DRS4 switched cap array")
+                    if not step == 1:
+                        raise ValueError("Step sizes larger than 1 not yet implemented")
 
-                # The data is described relative to the drs4_offset, which is absolute in position
-                if not self.run.SCAView:
-                    # key = 0 corresponds to the stop sample, so this is *time ordered*
-                    i = (self.drs4_stop + key) & 1023
+                    if start > stop:
+                        raise IndexError("Just don't do this, okay? (slice sensibly)")
+                                        
+                    # The data is described relative to the drs4_offset, which is absolute in position
+                    # So payload[0] is sca_array[drs4_stop]
+                    if self.run.SCAView:
+                        # key = 0 corresponds to the stop sample, so this is *capacitor ordered*
+                        # So we need to convert to time order
+                        start = start - self.drs4_stop 
+                        stop = stop - self.drs4_stop
+
+                    # Kill fast situations
+                    if start > len(self) or stop < 0:
+                        return np.repeat(NOT_DATA, stop - start)
+
+                    # Okay we have some overlap, so the following code is correct
+                                        
+                    # Figure how much sits before payload
+                    if start < 0:
+                        head = np.repeat(NOT_DATA, abs(start))
+                        start = 0
+                    else:
+                        head = np.empty([0], dtype=np.uint16)
+
+                    # Figure how much sits after the payload
+                    if stop > len(self):
+                        tail = np.repeat(NOT_DATA, min(abs(stop), abs(stop - len(self))))
+                        stop = len(self)
+                    else:
+                        tail = np.empty([0], dtype=np.uint16)
+
+                    # Now we should be able to build it correctly
+                    return np.concatenate((head, self.payload[start:stop], tail), axis=None)
+                
+                elif isinstance(key, int):
+
+                    # The data is described relative to the drs4_offset, which is absolute in position
+                    # So payload[0] is sca_array[drs4_stop]
+                    if self.run.SCAView:
+                        # key = 0 corresponds to the stop sample, so this is *capacitor ordered*
+                        key = key - self.drs4_stop
+
+                    # With singles, we can always overlap
+                    key = (key + 1024) & 1023  
+                  
+                    # Return the data if its there and not masked out
+                    if key < len(self):# and (self.sca_mask[i >> 3] & (0x80 >> (i & 7))):
+                        return self.payload[key]
+                    else:
+                        return NOT_DATA
                 else:
-                    # key = 0 corresponds to the absolute zero, so this is *capacitor ordered*
-                    i = key
-
-                # Return the data if its there
-                if i < len(self) and self.sca_mask[i]:
-                    return self.payload[i]
-                else:
-                    return NOT_DATA
-
+                    raise IndexError("Must index on an integer or a slice")
+                
             # Dump the channel stop, mask, and contents
             def __str__(self):
+                msg = ''
+                # Make a nice mask display
+                for n in range(1024 >> 7):
+                    msg += "caps [%4d, %4d]: %s\n" % (16*n*8, 16*(n+1)*8, self.sca_mask[16*n:16*(n+1)].hex())
+                    
                 return "drs4_stop: %d\n" \
                     "sca_mask:\n%s\n" \
-                    "payload:\n%s\n" % (self.drs4_stop, self.sca_mask, self.payload) 
+                    "payload:\n%s\n" % (self.drs4_stop, msg, self.payload) 
                 
             def __iter__(self):
                 return self.channelIterator(self)
@@ -159,14 +223,13 @@ class packetteRun(object):
                     self.i = 0
 
                 def __next__(self):
-                    try:
+                    if self.i < 1024:
                         datum = self.channel[self.i]
-                    except IndexError as e:
+                        self.i += 1
+                        return datum
+                    else:
                         raise StopIteration
-            
-                    self.i += 1
-                    return datum
-
+                    
     def parseOffsets(self, fp, fhandle, index):
         # This will index event byte boundaries in the underlying stream
         # Lookups can then be done by seeking in the underlying stream
@@ -459,8 +522,27 @@ def test():
     for event in events:
         for chan,data in event.channels.items():
             print("event %d, channel %d\n" % (event.event_num, chan))
+
+            print("Stepping through")
+            msg = ''
+            # Make a nice mask display
+            for n in range(1024 >> 4):
+                msg += "caps [%4d, %4d]: %s\n" % (16*n, 16*(n+1), data[16*n:16*(n+1)])
+
+            print(msg)
+            print("packetteChannel __str__()")
             print(data)
+
+            print("Test mask!  Fetches around the DRS4 stop should read no-data")
+            for i in range(data.drs4_stop - 10, data.drs4_stop + 10):
+                print(i, data[i])
+
+            # Kill the mask
+            data.resetMask()
             
+            for i in range(data.drs4_stop - 10, data.drs4_stop + 10):
+                print(i, data[i])
+
     print('')
     
     # import time

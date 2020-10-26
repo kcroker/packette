@@ -63,6 +63,9 @@ EVENT_CACHE_LENGTH = 100
 # (return views into this thing)
 empty_payload = np.full([1024], NOT_DATA, dtype=np.uint16)
 
+# Make it the pretty
+np.set_printoptions(formatter = {'int' : lambda x : '%4d' % x})
+
 # TODO: Implement readahead
 
 class packetteRun(object):
@@ -205,15 +208,27 @@ class packetteRun(object):
 
             # Dump the channel stop, mask, and contents
             def __str__(self):
-                msg = ''
+                msg = "----------------------------------------------------\n"
                 # Make a nice mask display
                 for n in range(1024 >> 7):
                     msg += "caps [%4d, %4d]: %s\n" % (16*n*8, 16*(n+1)*8, self.sca_mask[16*n:16*(n+1)].hex())
-                    
-                return "drs4_stop: %d\n" \
-                    "sca_mask:\n%s\n" \
-                    "payload:\n%s\n" % (self.drs4_stop, msg, self.payload) 
-                
+
+                msg += "----------------------------------------------------\n"
+
+                return ("drs4_stop: %d\n" \
+                        "len(payload): %d\n" \
+                        "sca_mask:\n%s\n" % (self.drs4_stop, len(self), msg))
+
+            # A human-readable view of the array state
+            def debugChannel(self, width=3):
+                msg = '# ' + ('SCA (capacitor-ordered) view' if self.run.SCAView else 'DRS4_STOP (time-ordered) view') + "\n"
+                step = 1 << width
+                # Make a nice mask display
+                for n in range(1024 >> width):
+                    msg += "caps [%4d, %4d]: %s\n" % (step*n, step*(n+1), self[step*n:step*(n+1)])
+
+                return msg
+
             def __iter__(self):
                 return self.channelIterator(self)
 
@@ -522,26 +537,12 @@ def test():
     for event in events:
         for chan,data in event.channels.items():
             print("event %d, channel %d\n" % (event.event_num, chan))
-
-            print("Stepping through")
-            msg = ''
-            # Make a nice mask display
-            for n in range(1024 >> 4):
-                msg += "caps [%4d, %4d]: %s\n" % (16*n, 16*(n+1), data[16*n:16*(n+1)])
-
-            print(msg)
-            print("packetteChannel __str__()")
-            print(data)
-
-            print("Test mask!  Fetches around the DRS4 stop should read no-data")
-            for i in range(data.drs4_stop - 10, data.drs4_stop + 10):
-                print(i, data[i])
+            print(data, data.debugChannel())
 
             # Kill the mask
             data.resetMask()
-            
-            for i in range(data.drs4_stop - 10, data.drs4_stop + 10):
-                print(i, data[i])
+            print(data, data.debugChannel())
+
 
     print('')
     

@@ -39,19 +39,18 @@ a_packette = { key : None for key in field_list }
 
 # Set it up
 a_packette['board_id'] = bytearray.fromhex('001337CA7500')
-a_packette['rel_offset'] = 0
 a_packette['seqnum'] = 0
 
 a_packette['event_num'] = 7
 a_packette['trigger_low'] = 12345
 a_packette['channel_mask'] = 0x00000000000000011
 
-a_packette['num_samples'] = 67
+a_packette['num_samples'] = 512
 a_packette['channel'] = 4
-a_packette['total_samples'] = 67
-a_packette['drs4_stop'] = 126
+a_packette['total_samples'] = 1022
+a_packette['drs4_stop'] = 1000
 
-payload = np.array(range(a_packette['num_samples']), dtype=np.uint16).tobytes()
+payload = np.array(range(a_packette['total_samples']), dtype=np.uint16)
 
 # Go get lifted
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -65,19 +64,23 @@ while True:
 
     
     # Sigh: Convert (unordered dictionary) -> namedtuple -> C structure
+    a_packette['rel_offset'] = 0
+    a_packette['num_samples'] = 512
     header = packette_transport.pack(*packette_tuple(**a_packette))
-
-    # How's that for convoluted slicing syntax?
-    # Stick the header at the front of the payload
-    # (since payload is the mutable type)
-    buf = header + payload
-
-    # Bye bye
+    buf = header + payload[a_packette['rel_offset']:a_packette['rel_offset'] + a_packette['num_samples']].tobytes()
     s.send(buf)
     
     # Increment
     a_packette['seqnum'] += 1
-    a_packette['event_num'] += 2
+    a_packette['rel_offset'] = a_packette['num_samples']
+    a_packette['num_samples'] = a_packette['total_samples'] - a_packette['num_samples']
+    header = packette_transport.pack(*packette_tuple(**a_packette))
+    buf = header + payload[a_packette['rel_offset']:a_packette['rel_offset'] + a_packette['num_samples']].tobytes()
+    s.send(buf)
+    
+    # Increment
+    a_packette['seqnum'] += 1
+    a_packette['event_num'] += 1
     
     # Sleep
     time.sleep(1)

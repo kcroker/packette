@@ -53,10 +53,15 @@ field_list = ['board_id',
 # Sample width should be defined universally somwhere
 SAMPLE_WIDTH = 2
 NOT_DATA = 0x4
+MASKED_DATA = 0x8
 
 # Stuff for packette_stream.py
 # (Caching so if you are browsing around between events, they stay in memory)
 EVENT_CACHE_LENGTH = 100
+
+# Stuff for not waste memory gooder
+# (return views into this thing)
+empty_payload = np.full([1024], NOT_DATA, dtype=np.uint16)
 
 # TODO: Implement readahead
 
@@ -135,74 +140,69 @@ class packetteRun(object):
 
             def resetMask(self):
                 self.sca_mask = bytearray([0xff for i in range(1024 >> 3)])
-                
+
             # Length
             def __len__(self):
                 return len(self.payload)
 
             # Return the data if its there, otherwise return NO_DATA
-            def __getitem__(self, key):
+            def __getitem__(self, i):
 
                 # Support slicing (looks slow as balls)
-                if isinstance(key, slice):
-                    start, stop, step = key.indices(1024)
+                if isinstance(i, slice):
+                    start, stop, step = i.indices(1024)
 
                     if not step == 1:
                         raise ValueError("Step sizes larger than 1 not yet implemented")
 
                     if start > stop:
                         raise IndexError("Just don't do this, okay? (slice sensibly)")
-                                        
-                    # The data is described relative to the drs4_offset, which is absolute in position
-                    # So payload[0] is sca_array[drs4_stop]
+
+                    # Convert to time ordered if we need to (payload is time ordered)
                     if self.run.SCAView:
-                        # key = 0 corresponds to the stop sample, so this is *capacitor ordered*
-                        # So we need to convert to time order
-                        start = start - self.drs4_stop 
-                        stop = stop - self.drs4_stop
+                        start -= self.drs4_stop
+                        stop -= self.drs4_stop
 
-                    # Kill fast situations
-                    if start > len(self) or stop < 0:
-                        return np.repeat(NOT_DATA, stop - start)
+                    # We're in time ordered
+                    if start > len(self) and stop < 0:
+                        return empty_payload[0:stop - start]
 
-                    # Okay we have some overlap, so the following code is correct
-                                        
-                    # Figure how much sits before payload
-                    if start < 0:
-                        head = np.repeat(NOT_DATA, abs(start))
-                        start = 0
-                    else:
-                        head = np.empty([0], dtype=np.uint16)
+                    # Now, don't be classy.  Yes it would be awesome to return a view
+                    # into the payload, but we need to mutate it too apply the mask.
+                    # So just, just get singles, man.  So filthy ... I feel ...  DIRTY
+                    thingus = np.empty([stop-start], dtype=np.uint16)
 
-                    # Figure how much sits after the payload
-                    if stop > len(self):
-                        tail = np.repeat(NOT_DATA, min(abs(stop), abs(stop - len(self))))
-                        stop = len(self)
-                    else:
-                        tail = np.empty([0], dtype=np.uint16)
+                    # We are in time ordered, so push this to SCA ordering
+                    # two additions, or 1024 additions?  getSCAItem() does wrap and crop
+                    for n,i in enumerate(range(start + self.drs4_stop, stop + self.drs4_stop)):
+                        thingus[n] = self.getSCAItem(i)
 
-                    # Now we should be able to build it correctly
-                    return np.concatenate((head, self.payload[start:stop], tail), axis=None)
+                    return thingus
                 
-                elif isinstance(key, int):
-
-                    # The data is described relative to the drs4_offset, which is absolute in position
-                    # So payload[0] is sca_array[drs4_stop]
+                elif isinstance(i, int):
                     if self.run.SCAView:
-                        # key = 0 corresponds to the stop sample, so this is *capacitor ordered*
-                        key = key - self.drs4_stop
-
-                    # With singles, we can always overlap
-                    key = (key + 1024) & 1023  
-                  
-                    # Return the data if its there and not masked out
-                    if key < len(self):# and (self.sca_mask[i >> 3] & (0x80 >> (i & 7))):
-                        return self.payload[key]
+                        return self.getSCAItem(i)
                     else:
-                        return NOT_DATA
+                        return self.getSCAItem(i + self.drs4_stop)
                 else:
                     raise IndexError("Must index on an integer or a slice")
-                
+
+            # Quit trying to be clever
+            def getSCAItem(self, scai):
+
+                # With singles, we can always overlap
+                scai = (scai + 1024) & 1023
+                ti = (scai - self.drs4_stop + 1024) & 1023
+
+                # Return the data if its there and not masked out
+                if ti < len(self):
+                    if self.sca_mask[scai >> 3] & (0x80 >> (scai & 7)):
+                        return self.payload[ti]
+                    else:
+                        return MASKED_DATA
+                else:
+                    return NOT_DATA
+
             # Dump the channel stop, mask, and contents
             def __str__(self):
                 msg = ''
@@ -342,9 +342,9 @@ class packetteRun(object):
             
             # Is this the first data for this channel? 
             if len(chan) == 0:
-                # Replace the empty with a properly sized numpy array
+                # Make a new block of memory
                 chan.drs4_stop = header['drs4_stop']
-                chan.payload = np.zeros(header['total_samples'])
+                chan.payload = np.zeros(header['total_samples'], dtype=np.uint16)
 
                 # Add a 5 sample symmetric mask around the stop sample
                 chan.mask(header['drs4_stop'] - 5, header['drs4_stop'] + 5)
@@ -516,7 +516,7 @@ def test():
     print('')
     
     # Switch to capacitor view
-    events.setSCAView(True)
+    # events.setSCAView(True)
 
     # Look at it using native dumps
     for event in events:

@@ -20,6 +20,10 @@ parser.add_argument('datafile', metavar='DATA',type=str, help='Read board output
 # Handle common configuration due to the common arguments
 ifc, args = A2x_common.connect(parser)
 
+if not args.N:
+    print("ERROR: You must specify the -N flag")
+    exit(1)
+    
 # Open up the events (set the view to capacitor ordering)
 events = packette.packetteRun(args.datafile, SCAView=True)
 
@@ -53,6 +57,9 @@ for voltage in (args.low, args.high):
     # Remember how many events we got, since these events correspond
     # to these values in the curve (we might not have received all N samples)
     event_count[voltage] = len(events)
+
+    if not event_count[voltage]:
+        raise Exception("Received no events??")
     
 # The slope denominator
 run = args.high - args.low

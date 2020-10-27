@@ -94,7 +94,11 @@ if __name__ == '__main__':
             # Make sure its an integer (so we can do fast integer subtraction when pedestalling raw ADC counts)
             if counts[chan][i] > 0:
                 sums[chan][i] = round(sums[chan][i]/counts[chan][i])
-                sumsquares[chan][i] = math.sqrt(sumsquares[chan][i]/counts[chan][i] - sums[chan][i]**2)
+                try:
+                    sumsquares[chan][i] = math.sqrt(sumsquares[chan][i]/counts[chan][i] - sums[chan][i]**2)
+                except ValueError as e:
+                    print("Fuck you")
+                    pass
             else:
                 print("WARNING: received zero counts for channel %d, capacitor %d" % (chan, i))
 

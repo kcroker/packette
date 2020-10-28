@@ -15,7 +15,7 @@ import lappdIfc
 parser = A2x_common.create('Generic configuration tool for Ultralytics A2x series LAPPD boards.')
 
 # Custom args
-parser.add_argument('-r', '--register', dest='registers', metavar='REGISTER', type=str, nargs=1, action='append', help='Peek and document the given register')
+parser.add_argument('-R', '--register', dest='registers', metavar='REGISTER', type=str, nargs=1, action='append', help='Peek and document the given register')
 
 # Connect to the board
 ifc, args = A2x_common.connect(parser)

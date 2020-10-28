@@ -147,33 +147,96 @@ class packetteRun(object):
                 
             # Dump the channel stop, mask, and contents
             def __str__(self):
-                
+
+                divider = "---------------------------------------\n"
                 msg = ''
                 msg += "drs4_stop: %d\n" \
-                       "len(payload): %d\n" \
-                       "cacheValid: %s\n"  % (self.drs4_stop, len(self), self.cacheValid, msg)
-
+                       "length: %d\n" \
+                       "cacheValid: %s\n"  % (self.drs4_stop, len(self), self.cacheValid)
+                msg += divider
                 msg += "masks:\n"
-                for mask in masks:
-                    msg += mask
+                if len(self.masks) > 0:
+                    for mask in self.masks:
+                        msg += str(mask)
+                else:
+                    msg += "None"
+                    
+                msg += "\n" + divider
                 msg += "payload (raw):\n"
-                msg += self.payload
+                msg += str(self.payload)
+                msg += "\n" + divider
                 
-                return msg
-
-            # A human-readable view of the (cached) array state
-            def debugChannel(self, width=3):
-                msg = '# ' + ('SCA (capacitor-ordered) view' if self.run.SCAView else 'DRS4_STOP (time-ordered) view') + "\n"
-                step = 1 << width
-                # Make a nice mask display
-                for n in range(1024 >> width):
-                    msg += "caps [%4d, %4d]: %s\n" % (step*n, step*(n+1), self[step*n:step*(n+1)])
-
                 return msg
 
             def mask(self, low, high):
-                self.masks.append((low, high))
+
+                # Nop
+                if low == high:
+                    return
                 
+                # Check for sanity
+                if low > high:
+                    raise ValueError("Low end of mask needs to exceed the high end of the mask")
+                elif high - low > 1024:
+                    raise ValueError("Specified mask exceeds length of capacitor array")
+                elif low < 0 and high < 0:
+                    raise ValueError("Don't be obnoxious")
+                
+                # Now check for negative masks
+                if low < 0:
+                    self.masks.append((1024 + low, 1023))
+                    self.masks.append((0, high))
+                else:
+                    self.masks.append((low, high))
+
+            def clearMasks(self):
+                self.masks = []
+                self.buildCache()
+
+            def masksToSCA(self):
+                newmasks = []
+
+                for low, high in self.masks:
+                    low += self.drs4_stop
+                    high += self.drs4_stop
+
+                    if low > 1024 and high > 1024:
+                        # We completely overflowed, wrap around
+                        low = 1024 - low
+                        high = 1024 - high
+                        newmasks.append((low,high))
+                    elif high > 1024:
+                        # We partially overflowed, so we need two masks now
+                        newmasks.append((low, 1023))
+                        newmasks.append((0, high - 1024))
+                    else:
+                        newmasks.append((low, high))
+
+                # Replace the old masks
+                self.masks = newmasks
+
+            def masksToTime(self):
+                newmasks = []
+
+                for low, high in self.masks:
+                    low -= self.drs4_stop
+                    high -= self.drs4_stop
+
+                    if low < 0 and high < 0:
+                        # We completely underflowed, wrap around
+                        prevhigh = high
+                        high = low + 1024
+                        low = prevhigh + 1024
+                        newmasks.append((low, high))
+                    elif low < 0:
+                        # We partially underflowed, so we need two masks now
+                        newmasks.append((1024+low, 1023))
+                        newmasks.append((0, high))
+                    else:
+                        newmasks.append((low, high))
+
+                self.masks = newmasks
+        
             def buildCache(self):
 
                 # Invalidate the cache
@@ -184,7 +247,8 @@ class packetteRun(object):
 
                 # Write the payload into the appropriate location into the cache
                 if self.run.SCAView:
-
+                    # Capacitor ordering
+                    
                     # First write up to the end
                     if self.length > 1024-self.drs4_stop:
                         upto = 1024-self.drs4_stop
@@ -193,7 +257,10 @@ class packetteRun(object):
                     else:
                         # No wraparound required
                         self.cachedView[self.drs4_stop:self.drs4_stop + self.length] = self.payload
-
+                else:
+                    # Time ordering
+                    self.cachedView[0:self.length] = self.payload
+                    
                 # Now apply masking
                 for low,high in self.masks:
                     self.cachedView[low:high] = MASKED_DATA
@@ -257,8 +324,29 @@ class packetteRun(object):
     # Time ordered views return capacitor DRS4_STOP when requesting index 0
     # Capacitor ordered views return capacitor 0 when requesting index 0
     def setSCAView(self, flag):
+
+        # Nop
+        if flag == self.SCAView:
+            return
+
+        # Set it
         self.SCAView = flag
-                
+
+        # Switch everyone's masks
+        # Rebuild everyone's in the event' cache's channel cache!
+        for event in self.eventCache.values():
+            for chan in event.channels.values():
+                # Convert mask values
+                if flag:
+                    chan.masksToSCA()
+                else:
+                    chan.masksToTime()
+
+                # Rebuild cache
+                chan.buildCache()
+
+        # (subsequently added events will automatically be channel cached correctly)
+        
     def loadEvent(self, event_num):
 
         # First check cache
@@ -320,7 +408,10 @@ class packetteRun(object):
                 chan.length = header['total_samples']
                 
                 # Add a 5 sample symmetric mask around the stop sample
-                chan.mask(header['drs4_stop'] - 5, header['drs4_stop'] + 5)
+                if self.SCAView:
+                    chan.mask(header['drs4_stop'] - 5, header['drs4_stop'] + 5)
+                else:
+                    chan.mask(-5, 5)
                 
             # Now, since the underlying stream may be growing, we might have gotten a header
             # but we don't have enough underlying data to finish out the event here
@@ -330,7 +421,8 @@ class packetteRun(object):
             if not len(capacitors) == header['num_samples']*SAMPLE_WIDTH:
 
                 # We didn't get this payload yet, that's fine.
-                # It'll work on the next read.
+                # It'll work on the next read, when we seek back to the last
+                # unprocessed header.
                 break
                 
             # Read the payload from this packet
@@ -346,7 +438,7 @@ class packetteRun(object):
         for data in event.channels.values():
             data.buildCache()
             
-        # Add this event to the cache, removing something if necessary
+        # Add this event to the event cache, removing something if necessary
         self.eventCache[event.event_num] = event
 
         if len(self.eventCache) > EVENT_CACHE_LENGTH:
@@ -473,39 +565,79 @@ class packetteRun(object):
             self.i += 1
             return event
 
+# A human-readable view of the (cached) array state
+def debugChannel(array, width=3):
+    #msg = '# ' + ('SCA (capacitor-ordered) view' if self.run.SCAView else 'DRS4_STOP (time-ordered) view') + "\n"
+    msg = ''
+    step = 1 << width
+    # Make a nice mask display
+    for n in range(1024 >> width):
+        msg += "caps [%4d, %4d]: %s\n" % (step*n, step*(n+1), array[step*n:step*(n+1)])
+
+    return msg
+
 # Testing stub
 def test():
-    events = packetteRun(sys.argv[1:])
+    events = packetteRun(sys.argv[1:], SCAView=True)
     print("Loaded %d events" % len(events))
 
     import pickle
     pickle.dump(events, open("pickledPacketteRun.dat", "wb"))
 
-    # Now lets try some accesses
-    # Works
-    for event in events:
-        for chan,data in event.channels.items():
-            print("event %d, channel %d\n" % (event.event_num, chan))
-            for n, datum in enumerate(data):
-                if (n & 15) == 15:
-                    print("")
-                print("%4d " % datum, end='')
-    print('')
-    
-    # Switch to capacitor view
-    # events.setSCAView(True)
-
     # Look at it using native dumps
     for event in events:
         for chan,data in event.channels.items():
             print("event %d, channel %d\n" % (event.event_num, chan))
-            print(data, data.debugChannel())
+            #print(data, debugChannel(data.cachedView))
 
+            # Looks like it works!
+            
+            # Test your cleverness with the masking
+            flags = (data.cachedView.copy()) & 0xF
+            flagged = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
+
+            print(debugChannel(flagged))
+            
             # Kill the mask
-            data.resetMask()
-            print(data, data.debugChannel())
+            # data.clearMasks()
+            #print(data, debugChannel(data.cachedView))
 
+            # Test it again
+            flags = (data.cachedView.copy()) & 0xF
+            flagged = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
 
+            print(debugChannel(flagged))
+
+    # Now switch to time ordered
+    events.setSCAView(False)
+    
+        # Look at it using native dumps
+    for event in events:
+        for chan,data in event.channels.items():
+            print("event %d, channel %d\n" % (event.event_num, chan))
+            #print(data, debugChannel(data.cachedView))
+
+            # Looks like it works!
+            
+            # Test your cleverness with the masking
+            flags = (data.cachedView.copy()) & 0xF
+            flagged = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
+
+            print(debugChannel(flagged))
+            
+            # Kill the mask
+            # data.clearMasks()
+            #print(data, debugChannel(data.cachedView))
+
+            # Test it again
+            flags = (data.cachedView.copy()) & 0xF
+            flagged = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
+
+            print(debugChannel(flagged))
+
+    # Lets see how big it is was a 100 event cache
+    pickle.dump(events, open("pickledPacketteRun.dat", "wb"))
+            
     print('')
     
     # import time
@@ -519,6 +651,6 @@ def test():
     # print("Loaded %d events" % len(events))
 
     
-# Invoke it
+# # Invoke it
 # test()    
 

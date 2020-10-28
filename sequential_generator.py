@@ -52,6 +52,9 @@ a_packette['drs4_stop'] = 1000
 
 payload = np.array(range(a_packette['total_samples']), dtype=np.uint16)
 
+# Make the valid data
+payload <<= 4
+
 # Go get lifted
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect((sys.argv[1], int(sys.argv[2])))

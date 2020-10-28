@@ -56,7 +56,7 @@ def pedestalAccumulator(fname):
 
             # Lets try to be clever here
             # This is liquid fast!
-            counts[chan] += 1 - ((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1)
+            counts[chan] += 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
 
     # We've processed all we could, ship it back
     return (sums, sumsquares, counts)

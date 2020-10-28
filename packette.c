@@ -979,10 +979,10 @@ int main(int argc, char **argv) {
       // ncurses output?
       if(ordered_file != stdout) {
 	mvprintw(11,0,output);
-	mvprintw(15,0,"Press Ctrl+C when you've had your fill...");
+	mvprintw(15+children,0,"Press Ctrl+C when you've had your fill...");
 	if(count > 0) {
 	  sprintf(output, "...otherwise accumulating %d events per child", count-1);
-	  mvprintw(16,0,output);
+	  mvprintw(16+children,0,output);
 	}
 	
 	refresh();

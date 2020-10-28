@@ -30,34 +30,34 @@ def pedestalAccumulator(fname):
     # Open the packette run (with view set to capacitor ordering)
     events = packette.packetteRun(fname, SCAView=True)
 
-    # Iterate through it
+    # Get an event
+    firstevent = iter(events).__next__()
+
+    # Pedestal accumulation assumes that the channel mask NEVER CHANGES!!!
+    chans = firstevent.channels.keys()
+
+    # Initialize accounting
+    for chan in firstevent.channels.keys():
+        sums[chan] = np.zeros([1024])
+        sumsquares[chan] = np.zeros([1024])
+        rmss[chan] = np.zeros([1024])
+        counts[chan] = np.zeros([1024])
+    
     for event in events:
+        for chan in chans:
+
+            # Strip out flags
+            stripped = event.channels[chan] & ~0xF
+            flags = event.channels[chan] & 0xF
             
-        # If this is the first event, do some initialization on our end
-        if chans is None:
-            chans = event.channels.keys()
-            
-            for chan in chans:
-                # Initialize the pairs list
-                sums[chan] = [0 for x in range(1024)]
-                sumsquares[chan] = [0 for x in range(1024)]
-                rmss[chan] = [0.0 for x in range(1024)]
+            # Use numpy vectorization
+            sums[chan] += stripped
+            sumsquares[chan] += stripped*stripped
 
-                # Initialize the count of tabulated samples
-                counts[chan] = [0 for i in range(1024)]
+            # Lets try to be clever here
+            # This is liquid fast!
+            counts[chan] += 1 - ((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1)
 
-        # Process it right here.
-        for chan in event.channels.keys():
-            for i in range(1024):
-
-                # If its not data, skip it
-                if event.channels[chan][i] == packette.NOT_DATA:
-                    continue
-
-                sums[chan][i] += event.channels[chan][i]
-                sumsquares[chan][i] += event.channels[chan][i]**2
-                counts[chan][i] += 1
-                    
     # We've processed all we could, ship it back
     return (sums, sumsquares, counts)
 
@@ -68,13 +68,12 @@ if __name__ == '__main__':
 
     # Use Pool, slicker.
     with multiprocessing.Pool(4) as p:
-        print("pedestal_calibration.py: spawning a worker process per file ...")
-        results = p.map(pedestalAccumulator, sys.argv[1:])
+         print("pedestal_calibration.py: spawning a worker process per file ...")
+         results = p.map(pedestalAccumulator, sys.argv[1:])
 
     print("pedestal_calibration.py: ... workers complete.")
 
-    for psums, psumsquares, pcounts in results:
-        
+    for psums, psumsquares, pcounts in results:        
         # Accumulate into the first responder
         if len(sums.keys()) == 0:
             sums = psums
@@ -82,25 +81,19 @@ if __name__ == '__main__':
             counts = pcounts
         else:
             for chan in sums.keys():
-                for i in range(1024):
-                    sums[chan][i] += psums[chan][i]
-                    sumsquares[chan][i] += psumsquares[chan][i]
-                    counts[chan][i] += pcounts[chan][i]
+                sums[chan] += psums[chan]
+                sumsquares[chan] += psumsquares[chan]
+                counts[chan] += pcounts[chan]
 
     # Compute averages and the average squares
-    import math
+    # We have to do these explicitly, but this takes constant time, instead of scaling like number of events
     for chan in sums.keys():
-        for i in range(1024):
-            # Make sure its an integer (so we can do fast integer subtraction when pedestalling raw ADC counts)
-            if counts[chan][i] > 0:
-                sums[chan][i] = round(sums[chan][i]/counts[chan][i])
-                try:
-                    sumsquares[chan][i] = math.sqrt(sumsquares[chan][i]/counts[chan][i] - sums[chan][i]**2)
-                except ValueError as e:
-                    print("Fuck you")
-                    pass
-            else:
-                print("WARNING: received zero counts for channel %d, capacitor %d" % (chan, i))
+
+        # Use numpy to vectorize this
+        sums[chan] = np.round(sums[chan]/counts[chan])
+
+        # Also try here
+        sumsquares[chan] = np.sqrt(sumsquares[chan]/counts[chan] - sums[chan]**2)
 
     # Write out a binary timing file
     import pickle

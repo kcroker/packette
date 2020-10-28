@@ -102,132 +102,66 @@ class packetteRun(object):
                 self.drs4_stop = drs4_stop
                 self.payload = payload
                 self.run = run
+                self.length = len(payload)
+                self.masks = []
+                
                 # Now, make a full array view for fast access
-                self.cachedView = np.empty([1024], dtype=np.uint16)
+                self.cachedView = np.full([1024], NOT_DATA, dtype=np.uint16) 
+
+                # Invalidate the cache, so that we have to build it
                 self.cacheValid = False
-                self.resetMask()
                 
-            # Masking allows you to ignore certain troublesome regions
-            # Masks are always in SCA view.
-            def mask(self, low, high):
-
-                if low < 0:
-                    low += 1024
-                
-                high = (high + 1024) & 1023
-
-                # Wrap around
-                if low > high:
-                    for i in range(low, 1023):
-                        self.sca_mask[i >> 3] &= ~(0x80 >> (i & 7))
-                    for i in range(0, high):
-                        self.sca_mask[i >> 3] &= ~(0x80 >> (i & 7))
-                else:
-                    for i in range(low, high):
-                        self.sca_mask[i >> 3] &= ~(0x80 >> (i & 7))
-                        
-            def unmask(self, low, high):
-
-                if low < 0:
-                    low += 1024
-                
-                high = (high + 1024) & 1023
-
-                # Wrap around
-                if low > high:
-                    for i in range(low, 1023):
-                        self.sca_mask[i >> 3] |= (0x80 >> (i & 7))
-                    for i in range(0, high):
-                        self.sca_mask[i >> 3] |= (0x80 >> (i & 7))
-                else:
-                    for i in range(low, high):
-                        self.sca_mask[i >> 3] |= (0x80 >> (i & 7))
-                        
-
-            def resetMask(self):
-                self.sca_mask = bytearray([0xff for i in range(1024 >> 3)])
-
             # Length
             def __len__(self):
-                return len(self.payload)
+                return self.length
 
             # Return the data if its there, otherwise return NO_DATA
             def __getitem__(self, i):
 
                 # If cache is valid, return directly
-                if self.cacheValid:
-                    return self.cachedView[i]
+                if not self.cacheValid:
+                    self.buildCache()
+                    
+                return self.cachedView[i]
+
+            #
+            # The strategy to do fast computations is that iterators and arithmetic operations
+            # always return the cached view.  So you're working directly with numpy primatives
+            #
+            def __iter__(self):
+                # Return the iterator of the cachedView
+                return iter(self.cachedView)
+
+            def __inv__(self, x):
+                return ~self.cachedView
+
+            def __and__(self, x):
+                return self.cachedView & x
+
+            def __or__(self, x):
+                return self.cachedView | x
+            
+            def __mul__(self, x):
+                # Multiply the cachedViews.  Allows to vectorize the channels
+                return self.cachedView * x.cachedView
                 
-                # Support slicing (looks slow as balls)
-                if isinstance(i, slice):
-                    start, stop, step = i.indices(1024)
-
-                    if not step == 1:
-                        raise ValueError("Step sizes larger than 1 not yet implemented")
-
-                    if start > stop:
-                        raise IndexError("Just don't do this, okay? (slice sensibly)")
-
-                    # Convert to time ordered if we need to (payload is time ordered)
-                    if self.run.SCAView:
-                        start -= self.drs4_stop
-                        stop -= self.drs4_stop
-
-                    # We're in time ordered
-                    if start > len(self) and stop < 0:
-                        return empty_payload[0:stop - start]
-
-                    # Now, don't be classy.  Yes it would be awesome to return a view
-                    # into the payload, but we need to mutate it too apply the mask.
-                    # So just, just get singles, man.  So filthy ... I feel ...  DIRTY
-                    thingus = np.empty([stop-start], dtype=np.uint16)
-
-                    # We are in time ordered, so push this to SCA ordering
-                    # two additions, or 1024 additions?  getSCAItem() does wrap and crop
-                    for n,i in enumerate(range(start + self.drs4_stop, stop + self.drs4_stop)):
-                        thingus[n] = self.getSCAItem(i)
-
-                    return thingus
-                
-                elif isinstance(i, int):
-                    if self.run.SCAView:
-                        return self.getSCAItem(i)
-                    else:
-                        return self.getSCAItem(i + self.drs4_stop)
-                else:
-                    raise IndexError("Must index on an integer or a slice")
-
-            # Quit trying to be clever
-            def getSCAItem(self, scai):
-
-                # With singles, we can always overlap
-                scai = (scai + 1024) & 1023
-                ti = (scai - self.drs4_stop + 1024) & 1023
-
-                # Return the data if its there and not masked out
-                if ti < len(self):
-                    if self.sca_mask[scai >> 3] & (0x80 >> (scai & 7)):
-                        return self.payload[ti]
-                    else:
-                        return MASKED_DATA
-                else:
-                    return NOT_DATA
-
             # Dump the channel stop, mask, and contents
             def __str__(self):
-                msg = "----------------------------------------------------\n"
-                # Make a nice mask display
-                for n in range(1024 >> 7):
-                    msg += "caps [%4d, %4d]: %s\n" % (16*n*8, 16*(n+1)*8, self.sca_mask[16*n:16*(n+1)].hex())
+                
+                msg = ''
+                msg += "drs4_stop: %d\n" \
+                       "len(payload): %d\n" \
+                       "cacheValid: %s\n"  % (self.drs4_stop, len(self), self.cacheValid, msg)
 
-                msg += "----------------------------------------------------\n"
+                msg += "masks:\n"
+                for mask in masks:
+                    msg += mask
+                msg += "payload (raw):\n"
+                msg += self.payload
+                
+                return msg
 
-                return ("drs4_stop: %d\n" \
-                        "len(payload): %d\n" \
-                        "cacheValid: %s\n" \
-                        "sca_mask:\n%s\n" % (self.drs4_stop, len(self), self.cacheValid, msg))
-
-            # A human-readable view of the array state
+            # A human-readable view of the (cached) array state
             def debugChannel(self, width=3):
                 msg = '# ' + ('SCA (capacitor-ordered) view' if self.run.SCAView else 'DRS4_STOP (time-ordered) view') + "\n"
                 step = 1 << width
@@ -237,32 +171,36 @@ class packetteRun(object):
 
                 return msg
 
+            def mask(self, low, high):
+                self.masks.append((low, high))
+                
             def buildCache(self):
 
                 # Invalidate the cache
                 self.cacheValid = False
-                
-                # Reconstruct it
-                self.cachedView = self[0:1024]
 
+                # Cleanse the the cachedView
+                self.cachedView.fill(NOT_DATA)
+
+                # Write the payload into the appropriate location into the cache
+                if self.run.SCAView:
+
+                    # First write up to the end
+                    if self.length > 1024-self.drs4_stop:
+                        upto = 1024-self.drs4_stop
+                        self.cachedView[self.drs4_stop:] = self.payload[:upto]
+                        self.cachedView[0:self.length - upto] = self.payload[upto:]
+                    else:
+                        # No wraparound required
+                        self.cachedView[self.drs4_stop:self.drs4_stop + self.length] = self.payload
+
+                # Now apply masking
+                for low,high in self.masks:
+                    self.cachedView[low:high] = MASKED_DATA
+                    
                 # Now always pull from cache
                 self.cacheValid = True
                     
-            def __iter__(self):
-                return self.channelIterator(self)
-
-            class channelIterator(object):
-                def __init__(self, channel):
-                    self.channel = channel
-                    self.i = 0
-
-                def __next__(self):
-                    if self.i < 1024:
-                        datum = self.channel[self.i]
-                        self.i += 1
-                        return datum
-                    else:
-                        raise StopIteration
                     
     def parseOffsets(self, fp, fhandle, index):
         # This will index event byte boundaries in the underlying stream
@@ -379,7 +317,8 @@ class packetteRun(object):
                 # Make a new block of memory
                 chan.drs4_stop = header['drs4_stop']
                 chan.payload = np.zeros(header['total_samples'], dtype=np.uint16)
-
+                chan.length = header['total_samples']
+                
                 # Add a 5 sample symmetric mask around the stop sample
                 chan.mask(header['drs4_stop'] - 5, header['drs4_stop'] + 5)
                 

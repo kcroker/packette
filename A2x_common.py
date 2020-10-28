@@ -23,7 +23,7 @@ def create(leader):
 
     parser.add_argument('-s', '--subtract', metavar='PEDESTAL_FILE', type=str, help='Upload a pedestal for firmware subtraction')
     parser.add_argument('-a', '--aim', metavar='UDP_PORT', type=int, default=1338, help='Aim the board at this port on this machine.')
-    parser.add_argument('-c', '--channels', metavar='CHANNELS', help="Explicitly force the channel mask. (Persistent)")
+    parser.add_argument('-c', '--channels', metavar='CHANNELS', help="Explicitly force a hex channel mask. (Persistent)")
     parser.add_argument('-w', '--wait', metavar='WAIT', type=int, help="Adjust delay between receipt of soft/hard trigger and DRS4 sampling stop. (Persistant)")
 
     parser.add_argument('-N', metavar='NUM_SAMPLES', type=int, default=0, help='Issue N soft triggers of the board')
@@ -97,19 +97,10 @@ def connect(parser):
 
     # Set the channels?
     if args.channels:
-        chans = list(map(int, args.channels.split()))
-        print("Specifying channels: ", chans, file=sys.stderr)
+        args.channels = int(args.channels, base=16)
 
-        high = 0
-        low = 0
-        for chan in chans:
-            if chan < 32:
-                low |= (1 << chan)
-            else:
-                high |= (1 << (chan - 32))
-
-        ifc.brd.pokenow(0x670, low)
-        ifc.brd.pokenow(0x674, high)
+        ifc.brd.pokenow(0x670, args.channels & 0x00000000FFFFFFFF)
+        ifc.brd.pokenow(0x674, (args.channels & 0xFFFFFFFF00000000) >> 32)
 
     # Set the wait?
     if args.wait:

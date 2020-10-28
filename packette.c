@@ -507,7 +507,7 @@ int main(int argc, char **argv) {
     if(children > 1)
       fprintf(stderr, "packette (parent): WARNING - Dumping multiple processes to STDOUT is only useful if output > /dev/null...\n");
     
-    fprintf(stderr, "packette (parent): Dumping to stdout...\n");
+    fprintf(stderr, "packette (parent): Dumping to stdout.  Press any key for statistics (updated at 1 Hz)...\n");
   }
 
   // Now grab mandatory positional arguments
@@ -869,14 +869,17 @@ int main(int argc, char **argv) {
     while(1) {
 
       // Reset timeout
-      if(ordered_file != stdout) {
-	parent_timeout.tv_sec = 0;
-      	parent_timeout.tv_usec = REFRESH_PERIOD;
-      }
-      else {
-	parent_timeout.tv_sec = 1;
-	parent_timeout.tv_usec = 0;
-      }
+      //      if(ordered_file != stdout) {
+
+      // Set the maximum refresh rate
+      // stdout will block on user input anyway
+      parent_timeout.tv_sec = 0;
+      parent_timeout.tv_usec = REFRESH_PERIOD;
+      /* } */
+      /* else { */
+      /* 	parent_timeout.tv_sec = 0; */
+      /* 	parent_timeout.tv_usec = 0; */
+      /* } */
 	
       // Sit in timeout for exactly TIMEOUT 
       while(1) {
@@ -970,6 +973,12 @@ int main(int argc, char **argv) {
 	
 	refresh();
       }
+      else {
+
+	// Block until the user requests statistics
+	fgetc(stdin);
+	fprintf(stderr, output);
+      }	    
    }
 
     // Close ncurses?

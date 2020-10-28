@@ -69,7 +69,9 @@ char *packette_logo =
 " |  _/    / _ \\    | (__    ' <   | _|    | |      | |    | _|  \n"
 " |_|     /_/ \\_\\    \\___|  _|\\_\\  |___|   |_|      |_|    |___| \n";
 
-                                                               
+char *static_header =
+  " PID   | Instantaneous rate             | Cumulative data\n-----------------------------------------------------------------";
+
 //
 // PACKET PROCESSORS
 //
@@ -507,7 +509,7 @@ int main(int argc, char **argv) {
     if(children > 1)
       fprintf(stderr, "packette (parent): WARNING - Dumping multiple processes to STDOUT is only useful if output > /dev/null...\n");
     
-    fprintf(stderr, "packette (parent): Dumping to stdout.  Press any key for statistics (updated at 1 Hz)...\n");
+    fprintf(stderr, "packette (parent): Dumping event data to stdout...\n");
   }
 
   // Now grab mandatory positional arguments
@@ -786,7 +788,7 @@ int main(int argc, char **argv) {
 	if(count && (prev_event_num > stash)) {
 	  if(!(--count - 1)) {
 	    fprintf(stderr,
-		    "packette (PID %d): Reached event limit.  Finishing up...\n");
+		    "packette (PID %d): Reached per-child event limit.  Finishing up...\n");
 	    break;
 	  }
 	}
@@ -859,27 +861,21 @@ int main(int argc, char **argv) {
 
       // Print out a message and table header
       mvprintw(0, 0, packette_logo);
-      mvprintw(9, 1, "PID");
-      mvprintw(9, 1+6, "| Instantaneous rate");
-      mvprintw(9, 1+6+33, "| Cumulative data");
-      mvprintw(10, 0, "-----------------------------------------------------------------");
+      mvprintw(9, 0, static_header);
+      
+      /* mvprintw(9, 1, "PID"); */
+      /* mvprintw(9, 1+6, "| Instantaneous rate"); */
+      /* mvprintw(9, 1+6+33, "| Cumulative data"); */
+      /* mvprintw(10, 0, "-----------------------------------------------------------------"); */
     }
     
 #define REFRESH_PERIOD 100000
     while(1) {
 
-      // Reset timeout
-      //      if(ordered_file != stdout) {
-
       // Set the maximum refresh rate
       // stdout will block on user input anyway
       parent_timeout.tv_sec = 0;
       parent_timeout.tv_usec = REFRESH_PERIOD;
-      /* } */
-      /* else { */
-      /* 	parent_timeout.tv_sec = 0; */
-      /* 	parent_timeout.tv_usec = 0; */
-      /* } */
 	
       // Sit in timeout for exactly TIMEOUT 
       while(1) {
@@ -976,8 +972,9 @@ int main(int argc, char **argv) {
       else {
 
 	// Block until the user requests statistics
+	fprintf(stderr, "packette (parent): You may request instantaneous statistics by pressing Enter...\n");
 	fgetc(stdin);
-	fprintf(stderr, output);
+	fprintf(stderr, "%s\n%s", static_header, output);
       }	    
    }
 

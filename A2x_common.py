@@ -29,7 +29,7 @@ def create(leader):
     parser.add_argument('-N', metavar='NUM_SAMPLES', type=int, default=0, help='Issue N soft triggers of the board')
     parser.add_argument('-i', metavar='INTERVAL', type=float, default=0.001, help='The interval (seconds) between software triggers')
     parser.add_argument('-I', '--initialize', action="store_true", help="Initialize the board")
-    parser.add_argument('-T', '--threads', metavar="NUM_THREADS", type=int, help="Number of distinct ports to receive data.  Ports increment from the aimed port.", default=1)
+    parser.add_argument('-t', '--threads', metavar="NUM_THREADS", type=int, help="Number of distinct ports to receive data.  Ports increment from the aimed port.", default=1)
 
     parser.add_argument('-e', '--external', action="store_true", help='Toggle hardware triggering.')
     parser.add_argument('-z', '--zero-suppress', action="store_true", help='Toggle firmware zero suppression')

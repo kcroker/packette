@@ -71,27 +71,6 @@ char *packette_logo =
 
                                                                
 //
-// Build channel map.  Returns the number of active channels
-// Assumes channel map has been initialized.
-//
-unsigned long buildChannelMap(unsigned long mask, unsigned char *channel_map) {
-
-  unsigned long active = 0;
-  unsigned char i = 0;
-
-  // Note that this short circuits as soon
-  // as all the high bits are dead! ::pride::
-  for(; mask; mask >> 1) {
-
-    // Check the LSB
-    if(mask & 0x1)
-      channel_map[i++] = ++active;
-  }
-
-  return active;
-}
-
-//
 // PACKET PROCESSORS
 //
 unsigned long nop_processor(void *buf,
@@ -180,6 +159,7 @@ unsigned long debug_processor(void *buf,
 
   struct packette_transport *ptr;
   unsigned int i;
+  unsigned long bytes;
   
   //
   // This outputs the headers that come in off the pipe
@@ -200,6 +180,8 @@ unsigned long debug_processor(void *buf,
     "--------- COMPUTED ---------\n"
     "Payload length (bytes):\t%u\n\n";
   i = 0;
+  bytes = 0;
+  
   while(vlen--) {
 
     // Get the first one, casting it so we can extract the fields
@@ -231,14 +213,17 @@ unsigned long debug_processor(void *buf,
     // Set the accounting
     *prev_seqnum = ptr->assembly.seqnum;
     *prev_event_num = ptr->header.event_num;
-    
+
+    // Keep track of bytes that came through
+    bytes += ptr->channel.num_samples*SAMPLE_WIDTH;
+
     // Get the next one
     buf += BUFSIZE;
     ++i;
 
   }
   
-  return 0;
+  return bytes;
 }
 
 //
@@ -501,7 +486,7 @@ int main(int argc, char **argv) {
     case 'd':
       packet_processor = atoi(optarg);
       if(packet_processor >= num_processor_ptrs) {
-	fprintf(stderr, "ERROR: Unknown packet processor %d\n", packet_processor);
+	fprintf(stderr, "packette (parent): ERROR - Unknown packet processor %d\n", packet_processor);
 	exit(EXIT_FAILURE);
       }
       break;
@@ -519,17 +504,15 @@ int main(int argc, char **argv) {
   // Sanity check
   if(ordered_file) {
 
-    if(children > 1) {
-      fprintf(stderr, "ERROR: Multiprocess dump to stdout is stupid.\n");
-      exit(EXIT_FAILURE);
-    }
+    if(children > 1)
+      fprintf(stderr, "packette (parent): WARNING - Dumping multiple processes to STDOUT is only useful if output > /dev/null...\n");
     
     fprintf(stderr, "packette (parent): Dumping to stdout...\n");
   }
 
   // Now grab mandatory positional arguments
   if(optind >= argc) {
-    fprintf(stderr, "ERRROR: Expected bind address after options\n");
+    fprintf(stderr, "packette (parent): ERRROR - Expected bind address after options\n");
     exit(EXIT_FAILURE);
   }
 

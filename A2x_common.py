@@ -27,7 +27,7 @@ def create(leader):
     parser.add_argument('-w', '--wait', metavar='WAIT', type=int, help="Adjust delay between receipt of soft/hard trigger and DRS4 sampling stop. (Persistant)")
 
     parser.add_argument('-N', metavar='NUM_SAMPLES', type=int, default=0, help='Issue N soft triggers of the board')
-    parser.add_argument('-i', metavar='INTERVAL', type=float, default=0.001, help='The interval (seconds) between software triggers')
+    parser.add_argument('-r', metavar='RATE', type=float, default=1000, help='The rate (in Hz) of software triggers')
     parser.add_argument('-I', '--initialize', action="store_true", help="Initialize the board")
     parser.add_argument('-t', '--threads', metavar="NUM_THREADS", type=int, help="Number of distinct ports to receive data.  Ports increment from the aimed port.", default=1)
 

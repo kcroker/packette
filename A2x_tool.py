@@ -21,8 +21,8 @@ parser.add_argument('-r', '--register', dest='registers', metavar='REGISTER', ty
 ifc, args = A2x_common.connect(parser)
 
 # Simple sanity check
-if args.i < 0:
-    raise Exception("Interval must be positive")
+if args.r < 0:
+    raise Exception("Rate must be positive")
     
 # Are we using an external trigger?  If so, kill the delay
 if args.external:
@@ -66,14 +66,17 @@ triggerToggled = False
 events = []
 import time
 
+# If we are using external triggers, be done
+if args.external:
+    exit(0)
+
+# Otherwise, send soft triggers
 for i in range(0, args.N):
-
-    if not args.external:
-        # Suppress board readback and response!
-        ifc.brd.pokenow(0x320, (1 << 6), readback=False, silent=True)
-
-        # Notify that a trigger was sent
-        # print("Trigger %d sent..." % i, file=sys.stderr)
-        
-        # Sleep for the specified delay
-        time.sleep(args.i)
+    # Suppress board readback and response!
+    ifc.brd.pokenow(0x320, (1 << 6), readback=False, silent=True)
+    
+    # Notify that a trigger was sent
+    # print("Trigger %d sent..." % i, file=sys.stderr)
+    
+    # Sleep for the specified delay
+    time.sleep(1.0/args.r)

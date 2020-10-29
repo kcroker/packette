@@ -143,7 +143,10 @@ class packetteRun(object):
             
             def __mul__(self, x):
                 # Multiply the cachedViews.  Allows to vectorize the channels
-                return self.cachedView * x.cachedView
+                if isinstance(x, packetteRun.packetteEvent.packetteChannel):
+                    return self.cachedView * x.cachedView
+                else:
+                    return self.cachedView * x
                 
             # Dump the channel stop, mask, and contents
             def __str__(self):

@@ -195,6 +195,9 @@ class packetteRun(object):
                 if low < 0:
                     self.masks.append((1024 + low, 1023))
                     self.masks.append((0, high))
+                elif high > 1023:
+                    self.masks.append((low, 1023))
+                    self,masks.append((0, high-1024))
                 else:
                     self.masks.append((low, high))
 

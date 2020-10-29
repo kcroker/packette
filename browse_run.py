@@ -50,12 +50,16 @@ while True:
             print(event.channels[var])
         else:
             print("Channel not present in this event")
-    else:
-        tmp = i
-        i = int(cmd)
-        if i < 0 or i > len(run):
+    elif cmd[0] == 'j':
+        try:
+            cmd, var = cmd.split()
+        except:
+            print("You must specify a channel number")
+            continue
+        var = int(var)
+        if var < 0 or var > len(run):
             print("Invalid event position")
-            i = tmp
+            i = var
         
         
 

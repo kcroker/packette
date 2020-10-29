@@ -792,9 +792,6 @@ int main(int argc, char **argv) {
 	    break;
 	  }
 	}
-
-
-	
       }
       else {
 
@@ -862,11 +859,6 @@ int main(int argc, char **argv) {
       // Print out a message and table header
       mvprintw(0, 0, packette_logo);
       mvprintw(9, 0, static_header);
-      
-      /* mvprintw(9, 1, "PID"); */
-      /* mvprintw(9, 1+6, "| Instantaneous rate"); */
-      /* mvprintw(9, 1+6+33, "| Cumulative data"); */
-      /* mvprintw(10, 0, "-----------------------------------------------------------------"); */
     }
     
 #define REFRESH_PERIOD 100000
@@ -1006,8 +998,4 @@ int main(int argc, char **argv) {
     free(kids);
     exit(0);
   }
-  
-  // Even though this will get torn down on process completion,
-  // come correct.
-  //  cleanup();
 }   

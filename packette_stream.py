@@ -91,7 +91,13 @@ class packetteRun(object):
                 # Advance to the next place in the mask
                 header['channel_mask'] >>= 1
                 chan += 1
-                
+
+        def __str__(self):
+            msg = "Event number: %d\n" % self.event_num
+            msg += "Trigger timestamp: %d\n" % self.trigger_low
+            msg += "Channels present: %s\n" % list(self.channels.keys())
+            return msg
+        
         # This acts like an array access, except
         # it returns NO_DATA for values that are not
         # defined 

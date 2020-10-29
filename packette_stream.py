@@ -166,7 +166,7 @@ class packetteRun(object):
                 msg += "masks:\n"
                 if len(self.masks) > 0:
                     for mask in self.masks:
-                        msg += str(mask)
+                        msg += str(mask) + "\n"
                 else:
                     msg += "None"
                     

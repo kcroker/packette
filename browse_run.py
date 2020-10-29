@@ -59,7 +59,8 @@ while True:
         var = int(var)
         if var < 0 or var > len(run):
             print("Invalid event position")
-            i = var
+
+        i = var
         
         
 

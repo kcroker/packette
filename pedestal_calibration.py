@@ -46,17 +46,22 @@ def pedestalAccumulator(fname):
     for event in events:
         for chan in chans:
 
-            # Strip out flags
-            stripped = event.channels[chan] & ~0xF
+            # Generate the mask fast
             flags = event.channels[chan] & 0xF
-            
+
+            # Lets try to be clever here
+            # This is liquid fast!
+            valid = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
+
+            # Zero out masked flagged data since we don't want to use it
+            stripped = event.channels[chan] * valid
+
             # Use numpy vectorization
             sums[chan] += stripped
             sumsquares[chan] += stripped*stripped
 
-            # Lets try to be clever here
-            # This is liquid fast!
-            counts[chan] += 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
+            # Accumulate where we *didn't* knockout
+            counts[chan] += valid
 
     # We've processed all we could, ship it back
     return (sums, sumsquares, counts)

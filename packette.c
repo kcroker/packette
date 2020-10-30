@@ -292,6 +292,7 @@ unsigned long order_processor(void *buf,
       }
 
       // If we ended up here, it was a duplicate ==> drop it.
+      fprintf(stderr, "DUP!");
     }
 
     // Advance to the next packet
@@ -396,13 +397,13 @@ void flagInterrupt(int signum) {
 // For runtime selectable packet processing pipeline
 const unsigned char num_processor_ptrs = 3;
 const char *processor_names[] = { "ordered_processor", "disordered_processor", "debug_processor" };
-const unsigned long (*processor_ptrs[])(void *buf,
-					struct mmsghdr *msgs,
-					int vlen,
-					FILE *ordered_file,
-					FILE *orphan_file,
-					uint64_t *prev_seqnum,
-					uint32_t *prev_event_num) = {&order_processor, &abandonment_processor, &debug_processor};
+unsigned long (*processor_ptrs[])(void *buf,
+				  struct mmsghdr *msgs,
+				  int vlen,
+				  FILE *ordered_file,
+				  FILE *orphan_file,
+				  uint64_t *prev_seqnum,
+				  uint32_t *prev_event_num) = {&order_processor, &abandonment_processor, &debug_processor};
 
 int main(int argc, char **argv) {
 
@@ -426,8 +427,7 @@ int main(int argc, char **argv) {
   cpu_set_t  mask;
 
   // Argument parsing stuff
-  int flags, opt;
-  int nsecs, tfnd;
+  int opt;
   unsigned short port;
   char *addr_str;
   unsigned int count;
@@ -723,7 +723,7 @@ int main(int argc, char **argv) {
     
     // Report success.
     fprintf(stderr,
-	    "packette (PID %d): Allocated %d bytes for direct socket transfer of %d packets.\n",
+	    "packette (PID %d): Allocated %ld bytes for direct socket transfer of %d packets.\n",
 	    pid,
 	    BUFSIZE * vlen,
 	    vlen);
@@ -788,7 +788,7 @@ int main(int argc, char **argv) {
 	if(count && (prev_event_num > stash)) {
 	  if(!(--count - 1)) {
 	    fprintf(stderr,
-		    "packette (PID %d): Reached per-child event limit.  Finishing up...\n");
+		    "packette (PID %d): Reached per-child event limit.  Finishing up...\n", pid);
 	    break;
 	  }
 	}

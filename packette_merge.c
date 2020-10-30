@@ -174,6 +174,10 @@ int main(int argc, char **argv) {
   fprintf(stderr,
 	  "Packette_merge: ...sorting complete.\n");
 
+  // WARNING: There may still be *duplicates* sitting in the orphans.
+  //          i.e. orphans themselves may be duplicated and orphans
+  //          may contain duplicates of things already present in ordered!
+  
   //
   // Step 2)
   //

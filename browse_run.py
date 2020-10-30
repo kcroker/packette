@@ -22,8 +22,9 @@ i = 0
 while True:
     
     pos, event = run[i]
-    print("Event at position %d in the run:\n%s" % (i, event))
-    choice = input("Press [n]ext, [p]revious, [c]hannel [number], jump to position [number], [q]uit: ")
+    print(" -- Ready to inspect event at position %d in the run. --\n%s" % (i, event), end='')
+    print("cachedViews are in " + ("capacitor ordering (e.g. SCA)" if events.SCAView else "time ordering (i.e. stop sample is first)"))
+    choice = input("Press [n]ext, [p]revious, [c]hannel [number], jump to position [number], [t]oggle view, [q]uit: ")
 
     cmd = choice.lower()
 
@@ -32,6 +33,8 @@ while True:
             print("End of run.")
         else:
             i += 1
+    elif cmd == 't':
+        events.setSCAView(not events.SCAView)
     elif cmd == 'p':
         if i > 0:
             i -= 1
@@ -57,10 +60,11 @@ while True:
             print("You must specify a channel number")
             continue
         var = int(var)
-        if var < 0 or var > len(run):
+        if var < 0 or var >= len(run):
             print("Invalid event position")
-
-        i = var
+        else:
+            i = var
         
-        
+    print('')
+    
 

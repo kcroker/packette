@@ -61,7 +61,7 @@ EVENT_CACHE_LENGTH = 100
 
 # Stuff for not waste memory gooder
 # (return views into this thing)
-empty_payload = np.full([1024], NOT_DATA, dtype=np.uint16)
+empty_payload = np.full([1024], NOT_DATA, dtype=np.int16)
 
 # Make it the pretty
 np.set_printoptions(formatter = {'int' : lambda x : '%5d' % x})
@@ -86,7 +86,7 @@ class packetteRun(object):
                 # print("mask: %x, channel: %d" % (header['channel_mask'], chan))
                 
                 if header['channel_mask'] & 0x1:
-                    self.channels[chan] = self.packetteChannel(0, np.empty([0], dtype=np.uint16), self.run)
+                    self.channels[chan] = self.packetteChannel(0, np.empty([0], dtype=np.int16), self.run)
 
                 # Advance to the next place in the mask
                 header['channel_mask'] >>= 1
@@ -112,7 +112,7 @@ class packetteRun(object):
                 self.masks = []
                 
                 # Now, make a full array view for fast access
-                self.cachedView = np.full([1024], NOT_DATA, dtype=np.uint16) 
+                self.cachedView = np.full([1024], NOT_DATA, dtype=np.int16) 
 
                 # Invalidate the cache, so that we have to build it
                 self.cacheValid = False
@@ -418,7 +418,7 @@ class packetteRun(object):
             if len(chan) == 0:
                 # Make a new block of memory
                 chan.drs4_stop = header['drs4_stop']
-                chan.payload = np.zeros(header['total_samples'], dtype=np.uint16)
+                chan.payload = np.zeros(header['total_samples'], dtype=np.int16)
                 chan.length = header['total_samples']
                 
                 # Add a 5 sample symmetric mask around the stop sample
@@ -440,7 +440,7 @@ class packetteRun(object):
                 break
                 
             # Read the payload from this packet
-            payload = np.frombuffer(capacitors, dtype=np.uint16)
+            payload = np.frombuffer(capacitors, dtype=np.int16)
 
             # Write the payload at the relative offset within the numpy array
             # XXX This will glitch if you try to give a rel_offset into a

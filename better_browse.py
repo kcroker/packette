@@ -21,7 +21,7 @@ pos = None
 event = None
 
 def stream_next(args):
-    if i+1 == len(run):
+    if i+1 >= len(run):
         print("End of run.")
     else:
         i += 1
@@ -36,6 +36,10 @@ def toggle_view(args):
     events.setSCAView(not events.SCAView)
 
 def switch_channel(args):
+
+    if event is None:
+        return
+    
     var = int(args)
     if var in event.channels:
         print(event.channels[var])
@@ -43,6 +47,10 @@ def switch_channel(args):
         print("Channel %d not present in this event" % var)
 
 def graph(args):
+
+    if event is None:
+        return
+    
     plt.cla()
 
     plt.xlabel('Capacitor')
@@ -105,9 +113,12 @@ class PacketteShell(cmd.Cmd):
     file = None
 
     def preloop(self):
-        pos, event = run[i]
-        print(" -- Ready to inspect event at position %d in the run. --\n%s" % (i, event), end='')
-        print("cachedViews are in " + ("capacitor ordering (e.g. SCA)" if events.SCAView else "time ordering (i.e. stop sample is first)"))
+        if len(run) > 0:
+            pos, event = run[i]
+            print(" -- Ready to inspect event at position %d in the run. --\n%s" % (i, event), end='')
+            print("cachedViews are in " + ("capacitor ordering (e.g. SCA)" if events.SCAView else "time ordering (i.e. stop sample is first)"))
+        else:
+            print(" -- No events in run yet.  Take data and refresh. -- ")
 
     # ----- basic turtle commands -----
     def do_next(self, arg):

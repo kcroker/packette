@@ -6,8 +6,18 @@ import time
 # We're gonna really streamline this
 import multiprocessing
 
+# Ploxy
+import matplotlib.pyplot as plt
+
 import packette_stream as packette
 #from packette_pedestal import pedestal
+
+import atexit
+import code
+import os
+import readline
+
+
 
 # Load some events
 events = packette.packetteRun(sys.argv[1:], SCAView=True)
@@ -22,8 +32,9 @@ i = 0
 while True:
     
     pos, event = run[i]
-    print("Event at position %d in the run:\n%s" % (i, event))
-    choice = input("Press [n]ext, [p]revious, [c]hannel [number], jump to position [number], [q]uit: ")
+    print(" -- Ready to inspect event at position %d in the run. --\n%s" % (i, event), end='')
+    print("cachedViews are in " + ("capacitor ordering (e.g. SCA)" if events.SCAView else "time ordering (i.e. stop sample is first)"))
+    choice = input("Press [n]ext, [p]revious\n Switch [c]hannel <number>\n [g]raph [<number> | <low>-<high>]\n Jump to position <number>, [t]oggle view, [q]uit: ")
 
     cmd = choice.lower()
 
@@ -32,6 +43,8 @@ while True:
             print("End of run.")
         else:
             i += 1
+    elif cmd == 't':
+        events.setSCAView(not events.SCAView)
     elif cmd == 'p':
         if i > 0:
             i -= 1
@@ -50,6 +63,46 @@ while True:
             print(event.channels[var])
         else:
             print("Channel not present in this event")
+
+    elif cmd[0] == 'g':
+        plt.cla()
+
+        plt.xlabel('Capacitor')
+        plt.ylabel('ADC value')
+        plt.grid(True)
+
+        try:
+            cmd, var = cmd.split()
+            low,high = var.split('-')
+
+            low = int(low)
+            high = int(high)
+
+            if low < high and low >= 0 and high < 64:
+                plt.title("Event %d, Channels %d-%d" % (event.event_num, low, high))
+                
+                for n in range(low,high):
+                    try:
+                        chan = event.channels[n]
+                        plt.plot(range(0,1024), chan[0:1024])
+                    except:
+                        pass
+
+                plt.show(block=False)
+        except:
+            try:
+                var = int(var)
+                if var in event.channels:
+                    chan = event.channels[var]
+                    plt.plot(range(0,1024), chan[0:1024], )
+
+                    plt.title("Event %d, Channel %d" % (event.event_num, var))
+                    plt.show(block=False)
+                else:
+                    print("Channel not present in this event")
+            except:
+                print("Did not know how to interpret your g")
+        
     elif cmd[0] == 'j':
         try:
             cmd, var = cmd.split()
@@ -57,10 +110,13 @@ while True:
             print("You must specify a channel number")
             continue
         var = int(var)
-        if var < 0 or var > len(run):
+        if var < 0 or var >= len(run):
             print("Invalid event position")
-
-        i = var
-        
-        
+        else:
+            i = var
+    elif cmd[0] == 'r':
+        pass
+    
+    print('')
+    
 

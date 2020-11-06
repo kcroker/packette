@@ -34,6 +34,8 @@ def create(leader):
     parser.add_argument('-e', '--external', action="store_true", help='Toggle hardware triggering.')
     parser.add_argument('-z', '--zero-suppress', action="store_true", help='Toggle firmware zero suppression')
     parser.add_argument('-O', '--oscillator', action="store_true", help='Toggle TCAL input between calibration signal and external analog SMA')
+
+    parser.add_argument('--adcmode', type=str, default='normal', help='Put the ADC into alternate modes for debugging')
     
     # At these values, unbuffered TCAL does not
     # have the periodic pulse artifact (@ CMOFS 0.8)
@@ -47,11 +49,26 @@ def create(leader):
     # Set the non-swept values
     # For both sides of the DRS rows
 
-    parser.add_argument('--oofs', metavar='OOFS', type=float, default=0.0, help='OOFS DAC output voltage')
-    parser.add_argument('--rofs', metavar='ROFS', type=float, default=1.05, help='ROFS DAC output voltage')
-    parser.add_argument('--tcal', metavar='TCAL', type=float, default=1.05, help='Start values for TCAL_N1 and TCAL_N2 DAC output voltage')
-    parser.add_argument('--cmofs', metavar='CMOFS', type=float, default=1.2, help='CMOFS DAC output Voltage')
-    parser.add_argument('--bias', metavar='BIAS', type=float, default=0.7, help='BIAS DAC output Voltage') #usually 0.7
+    # This is getting outputs, but maybe fucking the ADCs hard...
+    #parser.add_argument('--oofs', metavar='OOFS', type=float, default=1.3, help='DC offset for DRS4 output into ADC (OOFS)') #?/
+    parser.add_argument('--oofs', metavar='OOFS', type=float, default=0.8, help='DC offset for DRS4 output into ADC (OOFS)') #?/
+    parser.add_argument('--cmofs', metavar='CMOFS', type=float, default=0.8, help='DC offset into DRS4 (DRS4 wants 0.1 - 1.5V) (CMOFS)')
+    parser.add_argument('--tcal', metavar='TCAL', type=float, default=0.8, help='DC offset for the calibration lines TCAL_N1 and TCAL_N2')
+    parser.add_argument('--bias', metavar='BIAS', type=float, default=0.7, help='DRS4 BIAS voltage (DRS4 internally sets 0.7V usually)')
+    parser.add_argument('--rofs', metavar='ROFS', type=float, default=1.55, help='DRS4 read offset voltage (1.05V will capture signals with differential between 0 and 1V well)')
+
+    # parser.add_argument('--oofs', metavar='OOFS', type=float, default=0.8, help='DC offset for DRS4 output into ADC (OOFS)') #?/
+    # parser.add_argument('--cmofs', metavar='CMOFS', type=float, default=0.7, help='DC offset into DRS4 (DRS4 wants 0.1 - 1.5V) (CMOFS)')
+    # parser.add_argument('--tcal', metavar='TCAL', type=float, default=0.0, help='DC offset for the calibration lines TCAL_N1 and TCAL_N2')
+    # parser.add_argument('--bias', metavar='BIAS', type=float, default=0.8, help='DRS4 BIAS voltage (DRS4 internally sets 0.7V usually)')
+    # parser.add_argument('--rofs', metavar='ROFS', type=float, default=1.05, help='DRS4 read offset voltage (1.05V will capture signals with differential between 0 and 1V well)')
+
+    # # Hack values for A21
+    # parser.add_argument('--oofs', metavar='OOFS', type=float, default=0.0, help='OOFS DAC output voltage')
+    # parser.add_argument('--rofs', metavar='ROFS', type=float, default=1.05, help='ROFS DAC output voltage')
+    # parser.add_argument('--tcal', metavar='TCAL', type=float, default=1.05, help='Start values for TCAL_N1 and TCAL_N2 DAC output voltage')
+    # parser.add_argument('--cmofs', metavar='CMOFS', type=float, default=1.2, help='CMOFS DAC output Voltage')
+    # parser.add_argument('--bias', metavar='BIAS', type=float, default=0.7, help='BIAS DAC output Voltage') #usually 0.7
     
     return parser
 
@@ -77,6 +94,10 @@ def connect(parser):
     # Give the socket address for use by spawn()
     ifc.brd.aimNBIC(port=args.aim)
     args.listen = ifc.brd.s.getsockname()[0]
+
+    # Remember to set both ADCs
+    ifc.AdcSetTestMode(0, args.adcmode)
+    ifc.AdcSetTestMode(1, args.adcmode)
 
     # DAC Channel mappings (in A21 crosshacked)
     # (these should be moved to lappdIfc.py)
@@ -108,11 +129,13 @@ def connect(parser):
         print("Setting STOP delay to: %d" % args.wait, file=sys.stderr)
 
     # Enable the external trigger if it was requested
+    mysteryReg = ifc.brd.peeknow(0x370)
     if args.external:
-        mysteryReg = ifc.brd.peeknow(0x370)
         ifc.brd.pokenow(0x370, mysteryReg | (1 << 5))
-
-   # Return a tuble with the interface and the arguments
+    else:
+        ifc.brd.pokenow(0x370, mysteryReg & ~(0x0000000000000001 << 5))
+        
+        # Return a tuble with the interface and the arguments
     return (ifc, args)
 
 #

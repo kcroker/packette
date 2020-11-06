@@ -413,7 +413,7 @@ class lappdInterface :
             if f == 0 : 
               if v & (1<<11) != 0 : v = v - 0xfff - 1
             else : 
-              if v == 1 : 
+              if f == 1 : 
                 v = -9999
               else : 
                 v = 9999
@@ -564,6 +564,7 @@ class lappdInterface :
 
         if fwver >= 100 and doCal : self.CalibrateIDelaysFrameAll()
         if doCal : self.CalibrateIDelaysDataAll()
+        
 
         self.RegWrite(DRSREFCLKRATIO, self.drsrefclk)
         # print("DRSREFCLKRATIO : %d" % (self.drsrefclk), file=sys.stderr)
@@ -571,8 +572,8 @@ class lappdInterface :
         # initialize DRS-4 chips 
         self.DrsSetConfigReg()
         # enable DRS-4 transparent mode
-        self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 1)
-        print('DRS4 transparent mode is ON', file=sys.stderr)
+        self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 0)
+        print('DRS4 transparent mode is OFF', file=sys.stderr)
         # set DENABLE
         self.RegSetBit(MODE, C_MODE_DRS_DENABLE_BIT, 1)
         print('DENABLE is ON', file=sys.stderr)

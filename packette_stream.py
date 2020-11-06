@@ -61,10 +61,10 @@ EVENT_CACHE_LENGTH = 100
 
 # Stuff for not waste memory gooder
 # (return views into this thing)
-empty_payload = np.full([1024], NOT_DATA, dtype=np.uint16)
+empty_payload = np.full([1024], NOT_DATA, dtype=np.int16)
 
 # Make it the pretty
-np.set_printoptions(formatter = {'int' : lambda x : '%4d' % x})
+np.set_printoptions(formatter = {'int' : lambda x : '%5d' % x})
 
 # TODO: Implement readahead
 
@@ -86,7 +86,7 @@ class packetteRun(object):
                 # print("mask: %x, channel: %d" % (header['channel_mask'], chan))
                 
                 if header['channel_mask'] & 0x1:
-                    self.channels[chan] = self.packetteChannel(0, np.empty([0], dtype=np.uint16), self.run)
+                    self.channels[chan] = self.packetteChannel(0, np.empty([0], dtype=np.int16), self.run)
 
                 # Advance to the next place in the mask
                 header['channel_mask'] >>= 1
@@ -95,7 +95,7 @@ class packetteRun(object):
         def __str__(self):
             msg = "Event number: %d\n" % self.event_num
             msg += "Trigger timestamp: %d\n" % self.trigger_low
-            msg += "Channels present: %s\n" % list(self.channels.keys())
+            msg += "Channels: %s\n" % list(self.channels.keys())
             return msg
         
         # This acts like an array access, except
@@ -112,7 +112,7 @@ class packetteRun(object):
                 self.masks = []
                 
                 # Now, make a full array view for fast access
-                self.cachedView = np.full([1024], NOT_DATA, dtype=np.uint16) 
+                self.cachedView = np.full([1024], NOT_DATA, dtype=np.int16) 
 
                 # Invalidate the cache, so that we have to build it
                 self.cacheValid = False
@@ -172,8 +172,10 @@ class packetteRun(object):
                     
                 msg += "\n" + divider
                 msg += "payload (raw):\n"
-                msg += str(self.payload)
+                msg += dumpPayload(self.payload)
                 msg += "\n" + divider
+                msg += "cachedView:\n"
+                msg += dumpCachedView(self.cachedView)
                 
                 return msg
 
@@ -193,10 +195,10 @@ class packetteRun(object):
                 
                 # Now check for negative masks
                 if low < 0:
-                    self.masks.append((1024 + low, 1023))
+                    self.masks.append((1024 + low, 1024))
                     self.masks.append((0, high))
                 elif high > 1023:
-                    self.masks.append((low, 1023))
+                    self.masks.append((low, 1024))
                     self.masks.append((0, high-1024))
                 else:
                     self.masks.append((low, high))
@@ -219,7 +221,7 @@ class packetteRun(object):
                         newmasks.append((low,high))
                     elif high > 1024:
                         # We partially overflowed, so we need two masks now
-                        newmasks.append((low, 1023))
+                        newmasks.append((low, 1024))
                         newmasks.append((0, high - 1024))
                     else:
                         newmasks.append((low, high))
@@ -416,14 +418,14 @@ class packetteRun(object):
             if len(chan) == 0:
                 # Make a new block of memory
                 chan.drs4_stop = header['drs4_stop']
-                chan.payload = np.zeros(header['total_samples'], dtype=np.uint16)
+                chan.payload = np.zeros(header['total_samples'], dtype=np.int16)
                 chan.length = header['total_samples']
                 
                 # Add a 5 sample symmetric mask around the stop sample
                 if self.SCAView:
-                    chan.mask(header['drs4_stop'] - 5, header['drs4_stop'] + 5)
+                    chan.mask(header['drs4_stop'] - 20, header['drs4_stop'] + 20)
                 else:
-                    chan.mask(-5, 5)
+                    chan.mask(-20, 20)
                 
             # Now, since the underlying stream may be growing, we might have gotten a header
             # but we don't have enough underlying data to finish out the event here
@@ -438,7 +440,7 @@ class packetteRun(object):
                 break
                 
             # Read the payload from this packet
-            payload = np.frombuffer(capacitors, dtype=np.uint16)
+            payload = np.frombuffer(capacitors, dtype=np.int16)
 
             # Write the payload at the relative offset within the numpy array
             # XXX This will glitch if you try to give a rel_offset into a
@@ -459,10 +461,22 @@ class packetteRun(object):
         
         # Return this event
         return event
-    
+
+    #
+    # This does a hash-table lookup based on event number
+    # (no support for slicing)
+    #
     def __getitem__(self, key):
         return self.loadEvent(key)
-        
+
+    #
+    # This is much more natural behaviour...
+    # (since I use events within a run like a list, who looks up individual event number?)
+    #  so I need to shift to this)
+    #
+    def getnth(self, index):
+        pass
+    
     # Initialize and load the files
     def __init__(self, fnames, SCAView=False):
 
@@ -578,14 +592,27 @@ class packetteRun(object):
             return event
 
 # A human-readable view of the (cached) array state
-def debugChannel(array, width=3):
+def dumpCachedView(array, width=3):
     #msg = '# ' + ('SCA (capacitor-ordered) view' if self.run.SCAView else 'DRS4_STOP (time-ordered) view') + "\n"
     msg = ''
     step = 1 << width
     # Make a nice mask display
     for n in range(1024 >> width):
-        msg += "caps [%4d, %4d]: %s\n" % (step*n, step*(n+1), array[step*n:step*(n+1)])
+        msg += "caps [%4d, %4d]: %s\n" % (step*n, step*(n+1) - 1, array[step*n:step*(n+1)])
 
+    return msg
+
+def dumpPayload(array, width=3):
+    msg = ''
+    step = 1 << width
+    # Make a nice mask display
+    for n in range(len(array) >> width):
+        msg += "caps [%4d, %4d]: %s\n" % (step*n, step*(n+1) - 1, array[step*n:step*(n+1)])
+
+    # Print out the rest if we need to
+    if not (len(array) >> width) << width == len(array):
+        msg += "caps [%4d, %4d] :%s\n" % ( (len(array)>>width) << width, len(array) - 1, array[-(len(array)>>width)<<width:])
+    
     return msg
 
 # Testing stub
@@ -600,7 +627,7 @@ def test():
     for event in events:
         for chan,data in event.channels.items():
             print("event %d, channel %d\n" % (event.event_num, chan))
-            #print(data, debugChannel(data.cachedView))
+            #print(data, dumpCachedView(data.cachedView))
 
             # Looks like it works!
             
@@ -608,17 +635,17 @@ def test():
             flags = (data.cachedView.copy()) & 0xF
             flagged = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
 
-            print(debugChannel(flagged))
+            print(dumpCachedView(flagged))
             
             # Kill the mask
             # data.clearMasks()
-            #print(data, debugChannel(data.cachedView))
+            #print(data, dumpCachedView(data.cachedView))
 
             # Test it again
             flags = (data.cachedView.copy()) & 0xF
             flagged = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
 
-            print(debugChannel(flagged))
+            print(dumpCachedView(flagged))
 
     # Now switch to time ordered
     events.setSCAView(False)
@@ -635,17 +662,17 @@ def test():
             flags = (data.cachedView.copy()) & 0xF
             flagged = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
 
-            print(debugChannel(flagged))
+            print(dumpCachedView(flagged))
             
             # Kill the mask
             # data.clearMasks()
-            #print(data, debugChannel(data.cachedView))
+            #print(data, dumpCachedView(data.cachedView))
 
             # Test it again
             flags = (data.cachedView.copy()) & 0xF
             flagged = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
 
-            print(debugChannel(flagged))
+            print(dumpCachedView(flagged))
 
     # Lets see how big it is was a 100 event cache
     pickle.dump(events, open("pickledPacketteRun.dat", "wb"))

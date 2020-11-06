@@ -16,6 +16,7 @@ parser = A2x_common.create('Generic configuration tool for Ultralytics A2x serie
 
 # Custom args
 parser.add_argument('-R', '--register', dest='registers', metavar='REGISTER', type=str, nargs=1, action='append', help='Peek and document the given register')
+parser.add_argument('-W', '--words', metavar='NUM_WORDS', type=int, help='Number of samples to report after DRS4 stop. (must be power of 2 for packette)')
 
 # Connect to the board
 ifc, args = A2x_common.connect(parser)
@@ -53,6 +54,9 @@ human_readable = {
     0x620 : '36 + 4*(selected oversample)'
 }
 
+if args.words:
+    ifc.brd.pokenow(lappdIfc.ADCBUFNUMWORDS, int(args.words))
+
 for reg in [lappdIfc.DRSREFCLKRATIO, 0x620, lappdIfc.ADCBUFNUMWORDS]:
     val = ifc.brd.peeknow(reg)
     print("#\t%s (%s) = %d" % (human_readable[reg], hex(reg), val))
@@ -69,7 +73,7 @@ import time
 # If we are using external triggers, be done
 if args.external:
     exit(0)
-
+        
 # Otherwise, send soft triggers
 for i in range(0, args.N):
     # Suppress board readback and response!

@@ -20,35 +20,64 @@ i = 0
 pos = None
 event = None
 
-def stream_next(args):
+def stream_next():
+    global event, pos, i
+    
+    if event is None:
+        print("No current event!")
+        return
+    
     if i+1 >= len(run):
         print("End of run.")
     else:
         i += 1
+        stream_current()
 
-def stream_prev(args):
+def stream_prev():
+    global event, pos, i
+    
+    if event is None:
+        print("No current event!")
+        return
+    
     if i > 0:
         i -= 1
+        stream_current()
     else:
         print("Start of run.")
 
-def toggle_view(args):
+def stream_current():
+    global event, pos, i
+
+    # Update da kine
+    pos, event = run[i]
+
+    # Output it
+    print(event)
+    
+def toggle_view():
     events.setSCAView(not events.SCAView)
 
 def switch_channel(args):
-
+    global event, pos, i
+    
     if event is None:
+        print("No current event!")
         return
     
     var = int(args)
     if var in event.channels:
         print(event.channels[var])
+        print("cachedViews are in " + ("capacitor ordering (e.g. SCA)\n" if events.SCAView else "time ordering (i.e. stop sample is first)\n"))
+
     else:
         print("Channel %d not present in this event" % var)
 
 def graph(args):
-
+    global event, pos, i
+    
     if event is None:
+        print("No current event!")
         return
     
     plt.cla()
@@ -89,6 +118,8 @@ def graph(args):
             print("Could not understand your channel specification")
             
 def jump(args):
+    global event, pos, i
+    
     try:
         var = int(args)
         if var < 0 or var >= len(run):
@@ -101,6 +132,7 @@ def jump(args):
 def refresh():
     events.updateIndex()
     jump(len(events)-1)
+    stream_current()
     pass
 
 # Shell out and run the A2x_tool
@@ -108,47 +140,51 @@ def execute():
     pass
 
 class PacketteShell(cmd.Cmd):
+    global event, pos
+    
     intro = 'Welcome to packette better_browse.   Type help or ? to list commands.\n'
-    prompt = '(packette) '
+    prompt_text = "Event #%d @ %d (packette) " 
+    
     file = None
 
-    def preloop(self):
-        if len(run) > 0:
-            pos, event = run[i]
-            print(" -- Ready to inspect event at position %d in the run. --\n%s" % (i, event), end='')
-            print("cachedViews are in " + ("capacitor ordering (e.g. SCA)" if events.SCAView else "time ordering (i.e. stop sample is first)"))
-        else:
-            print(" -- No events in run yet.  Take data and refresh. -- ")
-
     # ----- basic turtle commands -----
+    def do_current(self, arg):
+        'Display current event information: current'
+        stream_current()
     def do_next(self, arg):
         'Advance to the next event within the stream: next'
-        stream_next(*parse(arg))
+        stream_next()
     def do_prev(self, arg):
         'Return to the previous event within the stream: prev'
-        stream_prev(*parse(arg))
+        stream_prev()
     def do_channel(self, arg):
         'Inspect a particular channel of the current event:  channel 5'
-        switch_channel(*parse(arg))
+        if len(arg) < 1:
+            print("Please specify a channel number")
+        else:
+            switch_channel(arg)
     def do_graph(self, arg):
         'Graph a channel or range of channels: graph 0-31, graph 4'
-        graph(*parse(arg))
-    def do_toggle(self):
+        graph(arg)
+    def do_toggle(self, arg):
         'Toggle between SCA (capacitor) view and time-ordered: toggle'
         toggle_view()
     def do_jump(self, arg):
         'Jump to an arbitrary event position within the stream:  jump 5'
-        jump(*parse(arg))
+        jump(arg)
     def do_cmd(self, arg):
         'cmd ./A2x_tool.py <whatever>: -I -N 20 10.0.6.97'
-        execute(*parse(arg))
+        execute(arg)
     def do_refresh(self, arg):
         'Rebuild stream index and jump to most recent event: refresh'
         refresh()
     def do_quit(self, arg):
         'Quit'
         self.close()
-        quit_browse()
+        return True
+    def do_EOF(self, arg):
+        'Quit'
+        self.close()
         return True
     
     # def do_position(self, arg):
@@ -181,20 +217,33 @@ class PacketteShell(cmd.Cmd):
         self.close()
         with open(arg) as f:
             self.cmdqueue.extend(f.read().splitlines())
+
+
+    def postcmd(self, stop, line):
+        global event, pos, i
+
+        if not event is None:
+            self.prompt = self.prompt_text % (event.event_num, pos)
+        else:
+            print(" -- No events in run yet.  Take data and refresh. -- ")
+
+        # Some of our commands are case sensitive!
+        #line = line.lower()
+        return stop
+
+    def preloop(self):
+        stream_current()
+        self.prompt = '(packette) ' if event is None else self.prompt_text % (event.event_num, pos)
+        
     def precmd(self, line):
-        line = line.lower()
         if self.file and 'playback' not in line:
             print(line, file=self.file)
         return line
+    
     def close(self):
         if self.file:
             self.file.close()
             self.file = None
-
-    
-def parse(arg):
-    'Convert a series of zero or more numbers to an argument tuple'
-    return tuple(map(int, arg.split()))
 
 if __name__ == '__main__':
     PacketteShell().cmdloop()

@@ -14,7 +14,6 @@ from packette_pedestal import pedestal
 #
 sums = {}
 sumsquares = {}
-rmss = {}
 counts = {}
 
 chans = None
@@ -38,10 +37,9 @@ def pedestalAccumulator(fname):
 
     # Initialize accounting
     for chan in firstevent.channels.keys():
-        sums[chan] = np.zeros([1024])
-        sumsquares[chan] = np.zeros([1024])
-        rmss[chan] = np.zeros([1024])
-        counts[chan] = np.zeros([1024])
+        sums[chan] = np.zeros([1024], dtype=np.float)
+        sumsquares[chan] = np.zeros([1024], dtype=np.float)
+        counts[chan] = np.zeros([1024], dtype=np.int32)
     
     for event in events:
         for chan in chans:
@@ -54,9 +52,11 @@ def pedestalAccumulator(fname):
             valid = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
 
             # Zero out masked flagged data since we don't want to use it
-            stripped = event.channels[chan] * valid
+            stripped = np.array(event.channels[chan] * valid, dtype=np.int64)
 
             # Use numpy vectorization
+            # (Because numpy computes the RHS first, honouring type, and then assigns
+            #  the np.int16's that would normally be here instead of int64's OVERFLOW)
             sums[chan] += stripped
             sumsquares[chan] += stripped*stripped
 
@@ -95,7 +95,7 @@ if __name__ == '__main__':
     for chan in sums.keys():
 
         # Use numpy to vectorize this
-        sums[chan] = np.round(sums[chan]/counts[chan])
+        sums[chan] = sums[chan]/counts[chan]
 
         # Also try here
         sumsquares[chan] = np.sqrt(sumsquares[chan]/counts[chan] - sums[chan]**2)

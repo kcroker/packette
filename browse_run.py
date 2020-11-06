@@ -12,6 +12,13 @@ import matplotlib.pyplot as plt
 import packette_stream as packette
 #from packette_pedestal import pedestal
 
+import atexit
+import code
+import os
+import readline
+
+
+
 # Load some events
 events = packette.packetteRun(sys.argv[1:], SCAView=True)
 
@@ -27,7 +34,7 @@ while True:
     pos, event = run[i]
     print(" -- Ready to inspect event at position %d in the run. --\n%s" % (i, event), end='')
     print("cachedViews are in " + ("capacitor ordering (e.g. SCA)" if events.SCAView else "time ordering (i.e. stop sample is first)"))
-    choice = input("Press [n]ext, [p]revious, [c]hannel [number], [g]raph [number], jump to position [number], [t]oggle view, [q]uit: ")
+    choice = input("Press [n]ext, [p]revious\n Switch [c]hannel <number>\n [g]raph [<number> | <low>-<high>]\n Jump to position <number>, [t]oggle view, [q]uit: ")
 
     cmd = choice.lower()
 
@@ -107,7 +114,9 @@ while True:
             print("Invalid event position")
         else:
             i = var
-        
+    elif cmd[0] == 'r':
+        pass
+    
     print('')
     
 

@@ -49,7 +49,9 @@ def create(leader):
     # Set the non-swept values
     # For both sides of the DRS rows
 
-    parser.add_argument('--oofs', metavar='OOFS', type=float, default=1.3, help='DC offset for DRS4 output into ADC (OOFS)') #?/
+    # This is getting outputs, but maybe fucking the ADCs hard...
+    #parser.add_argument('--oofs', metavar='OOFS', type=float, default=1.3, help='DC offset for DRS4 output into ADC (OOFS)') #?/
+    parser.add_argument('--oofs', metavar='OOFS', type=float, default=0.8, help='DC offset for DRS4 output into ADC (OOFS)') #?/
     parser.add_argument('--cmofs', metavar='CMOFS', type=float, default=0.8, help='DC offset into DRS4 (DRS4 wants 0.1 - 1.5V) (CMOFS)')
     parser.add_argument('--tcal', metavar='TCAL', type=float, default=0.8, help='DC offset for the calibration lines TCAL_N1 and TCAL_N2')
     parser.add_argument('--bias', metavar='BIAS', type=float, default=0.7, help='DRS4 BIAS voltage (DRS4 internally sets 0.7V usually)')
@@ -127,11 +129,13 @@ def connect(parser):
         print("Setting STOP delay to: %d" % args.wait, file=sys.stderr)
 
     # Enable the external trigger if it was requested
+    mysteryReg = ifc.brd.peeknow(0x370)
     if args.external:
-        mysteryReg = ifc.brd.peeknow(0x370)
         ifc.brd.pokenow(0x370, mysteryReg | (1 << 5))
-
-   # Return a tuble with the interface and the arguments
+    else:
+        ifc.brd.pokenow(0x370, mysteryReg & ~(0x0000000000000001 << 5))
+        
+        # Return a tuble with the interface and the arguments
     return (ifc, args)
 
 #

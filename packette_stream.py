@@ -423,9 +423,9 @@ class packetteRun(object):
                 
                 # Add a 5 sample symmetric mask around the stop sample
                 if self.SCAView:
-                    chan.mask(header['drs4_stop'] - 5, header['drs4_stop'] + 5)
+                    chan.mask(header['drs4_stop'] - 20, header['drs4_stop'] + 20)
                 else:
-                    chan.mask(-5, 5)
+                    chan.mask(-20, 20)
                 
             # Now, since the underlying stream may be growing, we might have gotten a header
             # but we don't have enough underlying data to finish out the event here

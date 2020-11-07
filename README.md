@@ -1,6 +1,6 @@
 
 # Packette v1.0
-<img src="http://www.phys.hawaii.edu/~kcroker/packette/fp.png" width="100%"/>
+<img src="http://www.phys.hawaii.edu/~kcroker/packette/fp.png" width="50%"/>
 
 _Chaotic good female fire elemental, carries and rips packets from sockets at blazing speed._
 

@@ -51,10 +51,13 @@ def stream_current():
     global event, pos, i
 
     # Update da kine
-    pos, event = run[i]
+    try:
+        pos, event = run[i]
 
-    # Output it
-    print(event)
+        # Output it
+        print(event)
+    except:
+        print("No events yet in stream...")
     
 def toggle_view():
     events.setSCAView(not events.SCAView)
@@ -111,10 +114,9 @@ def graph(args):
             var = int(args)
             if var in event.channels:
                 chan = event.channels[var]
-                plt.plot(range(0,1024), chan[0:1024], label='Channel %d' % n)
+                plt.plot(range(0,1024), chan[0:1024])
 
                 plt.title("Event %d, Channel %d" % (event.event_num, var))
-                plt.legend()
                 plt.show(block=False)
             else:
                 print("Channel not present in this event")
@@ -133,13 +135,14 @@ def jump(args):
     except:
         print("Could not understand your jump request")
 
+    stream_current()
+    
 def refresh():
     global run
     events.updateIndex()
     run = list(enumerate(events))
     jump(len(events)-1)
     stream_current()
-    pass
 
 # Shell out and run the A2x_tool
 def execute(args):

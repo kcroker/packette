@@ -42,7 +42,7 @@ Data, as it arrives, can then be inspected using `packette_browse.py`
 An example shell command is as follows.
 To graph the most recently arrived event's channels 0-31
 
-```bash
+```
    Event #7 @ 5 (packette) graph 0-31
 ```
 
@@ -52,7 +52,7 @@ stream is determined by receipt order at the client.
 Underlying instructions can be sent to board control software.  
 Consider the following 
 
-```bash
+```
    Event #7 @ 5 (packette) cmd -c 0x00000000000000ff -N 10 -r 500 10.0.6.212
    Event #7 @ 5 (packette) refresh
    Event #17 @ 17 (packette) graph 0-31
@@ -68,13 +68,13 @@ It does the following:
 The final operation will only reflect the 8 channels of data present.
 Individual channel data, including unmasked raw payloads, masks, and stop samples can be viewed with
 
-```bash
+```
    Event #7 @ 5 (packette) channel 5
 ```
 
 The following example places an A2x series board into ADC test-pattern mode 'ramp', sends a single soft trigger, and graphs all channels:
 
-```bash
+```
    Event #7 @ 5 (packette) cmd -c 0xffffffffffffffff -N 1 --adcmode ramp 10.0.6.212
    Event #7 @ 5 (packette) refresh
    Event #8 @ 6 (packette) graph 0-63

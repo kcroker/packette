@@ -53,13 +53,13 @@ Underlying instructions can be sent to board control software.
 Consider the following 
 
 ```bash
-   Event #7 @ 5 (packette) cmd -f 0x00000000000000ff -N 10 -r 500 10.0.6.212
+   Event #7 @ 5 (packette) cmd -c 0x00000000000000ff -N 10 -r 500 10.0.6.212
    Event #7 @ 5 (packette) refresh
    Event #17 @ 17 (packette) graph 0-31
 ```
 
 This example assumes use of packette with the Ultraltyics A2x series boards.  
-It does the following
+It does the following:
 
 1. set the channel mask and request 10 soft triggers at 500 Hz from an A2x board at IP 10.0.6.212
 2. update the stream index and jump to the most recently received event
@@ -71,3 +71,13 @@ Individual channel data, including unmasked raw payloads, masks, and stop sample
 ```bash
    Event #7 @ 5 (packette) channel 5
 ```
+
+The following example places an A2x series board into ADC test-pattern mode 'ramp', sends a single soft trigger, and graphs all channels:
+
+```bash
+   Event #7 @ 5 (packette) cmd -c 0xffffffffffffffff -N 1 --adcmode ramp 10.0.6.212
+   Event #7 @ 5 (packette) refresh
+   Event #8 @ 6 (packette) graph 0-63
+```
+
+

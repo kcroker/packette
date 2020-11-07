@@ -2,7 +2,9 @@
 
 import cmd, sys, subprocess
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 import packette_stream as packette
+import numpy as np
 
 if len(sys.argv) < 2:
     print("Please specify a set of packette run files")
@@ -83,23 +85,30 @@ def graph(args):
     if event is None:
         print("No current event!")
         return
-    
+
     plt.cla()
-
-    plt.xlabel('Capacitor')
-    plt.ylabel('ADC value')
-    plt.grid(True)
-
+    ax = plt.gca()
+    
+    ax.set_xlabel('Capacitor')
+    ax.set_ylabel('ADC value')
+    ax.grid(True)
+    ax.set_xlim(0,1025)
+    #ax.axvline(x=1024, dashes=(2,2,2,2), color='black')
+    
+    # OOO This is ugly code, merge it to a list containing a single line, and just
+    # graph once
+    
     try:
         low,high = args.split('-')
     
         low = int(low)
         high = int(high)
 
+        print("Request to plot channels %d to %d, inclusive" % (low, high))
+        
         if low < high and low >= 0 and high < 64:
             plt.title("Event %d, Channels %d-%d" % (event.event_num, low, high))
-            plt.xlim(right=1300)
-            for n in range(low,high):
+            for n in range(low,high+1):
                 try:
                     chan = event.channels[n]
                     plt.plot(range(0,1024), chan[0:1024], label='Channel %d' % n)
@@ -107,20 +116,62 @@ def graph(args):
                     pass
 
             # The dumbest coordinate system
-            plt.legend()
+            
+            ax.axhline(y=4, dashes=(2,2,2,2), color='black', label='No data')
+            ax.axhline(y=8, dashes=(1,1,1,1), color='black', label='Masked')
+            plt.axhspan(0, 8, alpha=0.2, facecolor='cyan', label='Flagged')
+            
+            lgd = ax.legend() #bbox_to_anchor=(1.04,1), loc="upper left")
+            # plt.tight_layout()
+            # ax.add_artist(lgd)
             plt.show(block=False)
     except:
         try:
+            # For singles, show individual masks, overflows, and underflows
+            
             var = int(args)
             if var in event.channels:
                 chan = event.channels[var]
-                plt.plot(range(0,1024), chan[0:1024])
 
-                plt.title("Event %d, Channel %d" % (event.event_num, var))
+                # Python cannot do signed bitwise math correctly unless width is
+                # coming into play?
+
+                # Get it in numpy so bitwise works
+                x = np.arange(1024, dtype=np.int16)
+                y = chan[0:1024]
+
+                # Test your cleverness with the masking
+                # ~ with signed is going to give you a bad day.
+                flags = (y & 0xF)
+                valid = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
+                ou = (((flags & 0x2) >> 1) | (flags & 0x1))
+                
+                xvalid = x[valid > 0]
+                yvalid = y[valid > 0]
+                validsegs = np.column_stack((xvalid, yvalid))
+                                
+                xou = x[ou > 0]
+                you = y[ou > 0]
+                ousegs = np.column_stack((xou, you))
+                                  
+                ax.set_ylim(int(np.min(yvalid)), int(np.max(yvalid)))
+
+                # Add some line collections
+                ax.add_collection(LineCollection([validsegs]))
+                ax.add_collection(LineCollection([ousegs]))
+
+                alreadyLabeled = False
+                for mlow,mhigh in chan.masks:
+                    plt.axvspan(mlow, mhigh, alpha=0.3, facecolor='gray', label='Masked' if not alreadyLabeled else '')
+                    alreadyLabeled = True
+                    
+                ax.set_title("Event %d, Channel %d" % (event.event_num, var))
+                ax.legend()
                 plt.show(block=False)
             else:
                 print("Channel not present in this event")
-        except:
+        except Exception as e:
+            print(e)
             print("Could not understand your channel specification")
             
 def jump(args):

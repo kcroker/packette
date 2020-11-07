@@ -93,9 +93,24 @@ class packetteRun(object):
                 chan += 1
 
         def __str__(self):
-            msg = "Event number: %d\n" % self.event_num
-            msg += "Trigger timestamp: %d\n" % self.trigger_low
-            msg += "Channels: %s\n" % list(self.channels.keys())
+            board_id = ':'.join(self.run.board_id.hex()[i:i+2] for i in range(0,12,2))
+            msg = "\nBoard MAC:\t %s\n" % board_id
+            msg += "Event number:\t %d\n" % self.event_num
+            msg += "Timestamp:\t %d\n" % self.trigger_low
+            msg += "Channels:\n "
+
+            chans = list(self.channels.keys())
+            drsstr = ''
+            for drs in range(8):
+                drsstr += "\tDRS%d: [" % drs
+                for chan in range(8):
+                    if drs*8+chan in chans:
+                        drsstr += '%3d' % (drs*8+chan)
+                    else:
+                        drsstr += ' . '
+                drsstr += " ]\n"
+
+            msg += drsstr
             return msg
         
         # This acts like an array access, except

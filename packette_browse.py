@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import cmd, sys
+import cmd, sys, subprocess
 import matplotlib.pyplot as plt
 import packette_stream as packette
 
@@ -12,7 +12,8 @@ if len(sys.argv) < 2:
 events = packette.packetteRun(sys.argv[1:], SCAView=True)
 
 # Display some information
-print("Browsing run described by: ", sys.argv[1:])
+#board_id = ':'.join(events.board_id.hex()[i:i+2] for i in range(0,12,2))
+print("Browsing run described by: %s\n" % sys.argv[1:])
 
 run = list(enumerate(events))
 
@@ -94,23 +95,26 @@ def graph(args):
 
         if low < high and low >= 0 and high < 64:
             plt.title("Event %d, Channels %d-%d" % (event.event_num, low, high))
-                
+            plt.xlim(right=1300)
             for n in range(low,high):
                 try:
                     chan = event.channels[n]
-                    plt.plot(range(0,1024), chan[0:1024])
+                    plt.plot(range(0,1024), chan[0:1024], label='Channel %d' % n)
                 except:
                     pass
 
+            # The dumbest coordinate system
+            plt.legend()
             plt.show(block=False)
     except:
         try:
             var = int(args)
             if var in event.channels:
                 chan = event.channels[var]
-                plt.plot(range(0,1024), chan[0:1024], )
+                plt.plot(range(0,1024), chan[0:1024], label='Channel %d' % n)
 
                 plt.title("Event %d, Channel %d" % (event.event_num, var))
+                plt.legend()
                 plt.show(block=False)
             else:
                 print("Channel not present in this event")
@@ -130,15 +134,24 @@ def jump(args):
         print("Could not understand your jump request")
 
 def refresh():
+    global run
     events.updateIndex()
+    run = list(enumerate(events))
     jump(len(events)-1)
     stream_current()
     pass
 
 # Shell out and run the A2x_tool
-def execute():
-    pass
+def execute(args):
 
+    print("Running ./A2x_tool.py %s...\n(Output will be displayed upon command completion)" % args)
+    
+    # Pass these directly to A2x_tool
+    results = subprocess.run(["./A2x_tool.py", *args.split()], stdout=subprocess.PIPE)
+
+    # Output the results
+    print(str(results.stdout))
+    
 class PacketteShell(cmd.Cmd):
     global event, pos
     
@@ -173,7 +186,7 @@ class PacketteShell(cmd.Cmd):
         'Jump to an arbitrary event position within the stream:  jump 5'
         jump(arg)
     def do_cmd(self, arg):
-        'cmd ./A2x_tool.py <whatever>: -I -N 20 10.0.6.97'
+        'cmd ./A2x_tool.py <whatever>: e.g. -I -N 20 10.0.6.97 to initialize the board at 10.0.6.97 and then request 20 soft triggers at the default rate'
         execute(arg)
     def do_refresh(self, arg):
         'Rebuild stream index and jump to most recent event: refresh'
@@ -186,27 +199,6 @@ class PacketteShell(cmd.Cmd):
         'Quit'
         self.close()
         return True
-    
-    # def do_position(self, arg):
-    #     'Print the current turtle position:  POSITION'
-    #     print('Current position is %d %d\n' % position())
-    # def do_heading(self, arg):
-    #     'Print the current turtle heading in degrees:  HEADING'
-    #     print('Current heading is %d\n' % (heading(),))
-    # def do_color(self, arg):
-    #     'Set the color:  COLOR BLUE'
-    #     color(arg.lower())
-    # def do_undo(self, arg):
-    #     'Undo (repeatedly) the last turtle action(s):  UNDO'
-    # def do_reset(self, arg):
-    #     'Clear the screen and return turtle to center:  RESET'
-    #     reset()
-    # def do_bye(self, arg):
-    #     'Stop recording, close the turtle window, and exit:  BYE'
-    #     print('Thank you for using Turtle')
-    #     self.close()
-    #     bye()
-    #     return True
 
     # ----- record and playback -----
     def do_record(self, arg):

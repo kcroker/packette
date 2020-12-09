@@ -2,6 +2,12 @@
 #import numpy as np
 import sys
 #import time
+import pickle
+from os import kill,environ
+
+# Do not ask me why this needs to be included now...
+sys.path.append("./eevee")
+environ['EEVEE_SRC_PATH'] = "./eevee"
 
 import lappdIfc            # Board+firmware *specific* stuff
 import eevee
@@ -30,7 +36,10 @@ for chan in aPedestal.mean:
 
         # Values are stored as signed 16 bit integers.
         # Upload needs to be signed 12 bit integers.
-        fullPeds.append( (chan, i, ((ped + (1 << 15)) >> 4) - (1 >> 11)) )
+        try:
+            fullPeds.append( (chan, i, ((int(ped) + (1 << 15)) >> 4) - (1 >> 11)) )
+        except:
+            pass
 
 print("Pedestal list flattened.")
 

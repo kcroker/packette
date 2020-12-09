@@ -32,6 +32,7 @@ def create(leader):
     parser.add_argument('-t', '--threads', metavar="NUM_THREADS", type=int, help="Number of distinct ports to receive data.  Ports increment from the aimed port.", default=1)
 
     parser.add_argument('-e', '--external', action="store_true", help='Toggle hardware triggering.')
+    parser.add_argument('-p', '--pedestal', action="store_true", help='Toggle hardware pedestal subtraction.')
     parser.add_argument('-z', '--zero-suppress', action="store_true", help='Toggle firmware zero suppression')
     parser.add_argument('-O', '--oscillator', action="store_true", help='Toggle TCAL input between calibration signal and external analog SMA')
 
@@ -51,7 +52,7 @@ def create(leader):
 
     # This is getting outputs, but maybe fucking the ADCs hard...
     #parser.add_argument('--oofs', metavar='OOFS', type=float, default=1.3, help='DC offset for DRS4 output into ADC (OOFS)') #?/
-    parser.add_argument('--oofs', metavar='OOFS', type=float, default=0.8, help='DC offset for DRS4 output into ADC (OOFS)') #?/
+    parser.add_argument('--oofs', metavar='OOFS', type=float, default=1.3, help='DC offset for DRS4 output into ADC (OOFS)') #?/
     parser.add_argument('--cmofs', metavar='CMOFS', type=float, default=0.8, help='DC offset into DRS4 (DRS4 wants 0.1 - 1.5V) (CMOFS)')
     parser.add_argument('--tcal', metavar='TCAL', type=float, default=0.8, help='DC offset for the calibration lines TCAL_N1 and TCAL_N2')
     parser.add_argument('--bias', metavar='BIAS', type=float, default=0.7, help='DRS4 BIAS voltage (DRS4 internally sets 0.7V usually)')
@@ -134,8 +135,14 @@ def connect(parser):
         ifc.brd.pokenow(0x370, mysteryReg | (1 << 5))
     else:
         ifc.brd.pokenow(0x370, mysteryReg & ~(0x0000000000000001 << 5))
+
+    # Enable pedestal subtraction if it was requested
+    if args.pedestal:
+        ifc.brd.pokenow(0x370, mysteryReg | (1 << lappdIfc.C_MODE_PEDSUB_EN_BIT))
+    else:
+        ifc.brd.pokenow(0x370, mysteryReg & ~(0x0000000000000001 << lappdIfc.C_MODE_PEDSUB_EN_BIT))
         
-        # Return a tuble with the interface and the arguments
+    # Return a tuble with the interface and the arguments
     return (ifc, args)
 
 #

@@ -80,4 +80,41 @@ The following example places an A2x series board into ADC test-pattern mode 'ram
    Event #8 @ 6 (packette) graph 0-63
 ```
 
+## Taking a pedestal
 
+Right now, this process is not streamlined, but its easy enough.
+In this example, we will use 4 processes at every step.
+In packette, packet reception and processing are decoupled, so first start `packette` in
+a terminal to monitor the acquisition
+```
+   $ ./packette 10.0.6.254 -f pedestal_waveforms -t 4
+```
+This example will spawn 4 processes to listen on 4 UDP ports, respectively. 
+Then, in a different terminal, request the raw waveforms
+```
+   $ ./A2x_tool.py 10.0.6.97 -N 10000 -r 700 -c 0x00000000ffffffff -t 4
+```
+This will request 10k waveforms, for channels 0-31, from the board at 10.0.6.97, at a soft-triggered rate of 700Hz,
+and will instruct the board to distribute them across 4 UDP ports.
+You'll see the data flowing into `packette`.
+When `A2x_tool` is done, Ctrl+C `packette`.
+
+Now you can run generate the pedestal in parallel
+```
+   $ time ./pedestal_calibration.py rawdata/pedestal_waveforms_10.0.6.254_*.ordered
+```
+The leading `time` is not required, but you can see how fast it goes.
+I can get a 1% pedestal for 32 channels in ~7s on a computer literally pulled out of the garbage.
+Awkwardly right now, the pedestal file generated is always called `boardid.pedestal` (sorry).
+To inspect performace, run
+```
+   $ ./describe_pedestal.py boardid.pedestal > ascii_pedestal
+```
+The `ascii_pedestal` will have a block of data for each channel, with columns: capacitor #, mean, RMS, channel (for convenience), counts.
+This can be visualized in `gnuplot`, for example
+```
+   gnuplot> set term x11
+   gnuplot> plot "ascii_pedestal" every :::4::4 using 1:2:3 with errorbars
+```
+This will plot the mean values with RMS as errorbars for the 5th channel appearing in the pedestal description.
+For our particular `pedestal_waveforms`, this will be channel 4.

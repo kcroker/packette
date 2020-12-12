@@ -26,7 +26,7 @@ print("Connection to EEVEE @ %s established." % sys.argv[1])
 # We have 1024 pedestals per channel
 # Each register set is a 32bit address and 32bit word
 # 
-maxSetsPerPacket = 128
+maxSetsPerPacket = 1#28
 
 # Preprocess into a single list first, so we can easily split up
 # the transactions
@@ -47,18 +47,22 @@ print("Pedestal list flattened.")
 count = 0
 for chan,i,ped in fullPeds:
 
-    if count < maxSetsPerPacket:
-        # Multiplication by 4 because 32bits per address
-        addr = lappdIfc.ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
+    #if count < maxSetsPerPacket:
+    # Multiplication by 4 because 32bits per address
+    addr = lappdIfc.ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
 
-        # Add a directive to write this puppy
-        board.poke(addr, ped)
-    else:
-        # Execute the transaction
-        readback = board.transact()
+    # Add a directive to write this puppy
+    board.pokenow(addr, ped)
 
-        # Reset count
-        count = 0
+    #     count += 1 
+    # else:
+    #     # Execute the transaction
+    #     #readback = board.transact()
+
+    print("Sent", chan, i, ped)
+        
+    # Reset count
+    # count = 0
 
 # Done
 print("Pedestal written.")

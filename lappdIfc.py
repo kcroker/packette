@@ -564,7 +564,6 @@ class lappdInterface :
 
         if fwver >= 100 and doCal : self.CalibrateIDelaysFrameAll()
         if doCal : self.CalibrateIDelaysDataAll()
-        
 
         self.RegWrite(DRSREFCLKRATIO, self.drsrefclk)
         # print("DRSREFCLKRATIO : %d" % (self.drsrefclk), file=sys.stderr)

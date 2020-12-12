@@ -290,6 +290,7 @@ class PacketteShell(cmd.Cmd):
         if self.file:
             self.file.close()
             self.file = None
+        print('')
 
 if __name__ == '__main__':
     PacketteShell().cmdloop()

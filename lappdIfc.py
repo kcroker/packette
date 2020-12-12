@@ -26,7 +26,7 @@ NBIC_PORTS      = 0x0218
 
 CMD             = 0x0320 # asserted for 1 clk cycle see description of bits below
 ADCBUFNUMWORDS  = 0x0328 # number of DRS samples, if <=1024 then ROI mode else FULL
-ADCDEBUG1       = 0x0330
+ADCDEBUG1       = 0x0330 # continuously registered ADC data for the channel number ADCDEBUGCHAN 
 ADCBUFDEBUG     = 0x0338
 ADCCLKDELAY     = 0x0340 # IDELAY 
 ADCFRAMEDELAY_0 = 0x0348 # IDELAY
@@ -39,10 +39,10 @@ DRSPLLLCK       = 0x0378 # PLL Lock states
 ADCBUFCURADDR   = 0x0380 # current position in ADC buffer
 STATUS          = 0x0388 # reserved, not filled at the moment
 DRSREFCLKRATIO  = 0x0390 # REFCLK ratio
-ADCFRAMEDEBUG   = 0x03A8 # not filled
+ADCFRAMEDEBUG   = 0x03A8 # not used anymore
 ADCDATADELAY_0  = 0x0400 # IDELAY for ADC data lines (64 registers, i-th channel ADCDATADELAY_0 + i*4) 
 
-ADCDELAYDEBUG   = 0x0500   
+ADCDELAYDEBUG   = 0x0500 # readback IDELAY delay values
 DRSADCPHASE     = 0x0600 # 8ns tune of phase between ADC cov clock and SRCLK
 NSAMPLEPACKET   = 0x0610 # maximum number of samples in the packet
 DRSVALIDPHASE   = 0x0618 #   
@@ -73,6 +73,7 @@ C_CMD_ADCRESET_BIT  = 4 # reset ADCs
 C_CMD_ADCBTSLP_BIT  = 5 # obsolete
 C_CMD_READREQ_BIT   = 6 # start DRS readout sequence
 C_CMD_RUNRESET_BIT  = 7 # reset nun number and event building state machine
+C_CMD_ADCRDRESET_BIT = 8 # reset nun number and event building state machine
 
 ##################################
 # bits of MODE register
@@ -109,7 +110,9 @@ class lappdInterface :
         self.brd = eevee.board(ip, udpsport = udpsport) 
         self.peds = [0]*1024
         self.rmss = [0]*1024
-        self.AdcSampleOffset = 12
+        self.peds_roi = [0]*1024
+        self.rmss_roi = [0]*1024
+        self.AdcSampleOffset = 0
         self.TestPattern = [0xabc, 0x543]
         self.NCalSamples = 100
         self.drsrefclk = 51
@@ -274,8 +277,6 @@ class lappdInterface :
             frame_dly[iadc] = self.CalibrateIDelayFrame(iadc)
         for iadc in range(0,2) :
             self.RegWrite(ADCFRAMEDELAY_0 + iadc*4, frame_dly[iadc])
-        # reset bitslips for ISERDESEs on data lines
-        self.RegSetBit(CMD, C_CMD_RESET_BIT, 1)
 
     def CalibrateIDelaysDataAll(self) :
         for iadc in range(0,2) :
@@ -337,7 +338,7 @@ class lappdInterface :
         dly_prev_bad = False
         for dly in range(0,0x20) :
             self.RegWrite(ADCFRAMEDELAY_0+nadc*4, dly)
-            time.sleep(0.01)
+            time.sleep(0.001)
             sta = self.RegRead(STATUS) & (1 << nadc)
             if sta != 0 :
                 if dly_prev_bad : i = i + 1
@@ -443,11 +444,15 @@ class lappdInterface :
         return int(dacCode)
 
     # initialize DAC
-    def DacIni(self):
-        self.RegWrite(ADDR_DAC_OFFSET | (0x4<<2),0x1ff)
+    def DacIni(self, i = 0):
+      if not 0 <= i <= 1 :
+        print('error :: wrong DAC number')
+        return False
+      dac_num_addr = (i << 4)
+      self.RegWrite(ADDR_DAC_OFFSET | ((0x4 | dac_num_addr)<<2),0x1ff)
 
     # set output voltage
-    def DacSetVout(self, dac_chn, vout):
+    def DacSetVout(self, dac_num, dac_chn, vout):
 
         if type(dac_chn) == int :
             dac_chn_i = dac_chn
@@ -459,9 +464,15 @@ class lappdInterface :
         if dac_chn_i < 0 or dac_chn_i > 7 :
             raise Exception('ERROR:: Wrong DAC channel')
 
-        addr = ADDR_DAC_OFFSET | ((8 | dac_chn_i)<<2)
+        if not 0 <= dac_num <= 1 :
+            print('error :: wrong DAC number')
+            return False
+
+        dac_num_addr = (dac_num << 4)
+
+        addr = ADDR_DAC_OFFSET | ((8 | dac_chn_i | dac_num_addr)<<2)
         val  = self.GetDacCode(vout)
-        print('DAC out: %d addr: %s voltage: %f code: %s' % (dac_chn_i, hex(addr), vout, hex(val)), file=sys.stderr)
+        print('#%d DAC out: %d addr: %s voltage: %f code: %s' % (dac_num, dac_chn_i, hex(addr), vout, hex(val)), file=sys.stderr)
         self.RegWrite(addr, val)
 
     # set all voltages to operating values
@@ -471,12 +482,14 @@ class lappdInterface :
         self.DacIni()
 
         # set output voltages TODO: don't hardcode values here
-        self.DacSetVout(0,0.7)   # BIAS
-        self.DacSetVout(1,1.0)  # ROFS
-        self.DacSetVout(2,1.3)   # OOFS
-        self.DacSetVout(3,0.7) # CMOFS
-        self.DacSetVout(4,0.5) #TCAL_N1
-        self.DacSetVout(5,0.5) #TCAL_N2
+        for i in range(2) : 
+            self.DacSetVout(i, 0,0.7)   # BIAS
+            self.DacSetVout(i, 1,1.55)  # ROFS
+            self.DacSetVout(i, 2,0.8)   # OOFS
+            self.DacSetVout(i, 3,0.8) # CMOFS
+            self.DacSetVout(i, 4,0.8) #TCAL_N1
+            self.DacSetVout(i, 5,0.8) #TCAL_N2
+
         
 
     # set all voltages to 0
@@ -509,20 +522,20 @@ class lappdInterface :
         self.RegWrite(ADCDEBUGCHAN,chan)
         return True
 
-    def MeasurePeds(self, nev = 5):
+    def MeasurePeds(self, ch = 0, nev = 5):
+        self.RegWrite(ADCBUFNUMWORDS,1025)
         self.RegSetBit(MODE, C_MODE_DRS_DENABLE_BIT,1)
-        self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT,1)
 
-        bufs = [[0]*5 for i in range(1024)]
+        bufs = [[0]*nev for i in range(1024)]
 
         for i in range(nev) :
             print(i, file=sys.stderr)
             self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
             time.sleep(0.001)
-            v = self.ReadMem(0,4200,15)
+            v = self.ReadMem(0,1024,ch)
             # print(v)
             for isample in range(0,1024) :
-                bufs[isample][i] = v[self.AdcSampleOffset + 4*isample]
+                bufs[isample][i] = v[self.AdcSampleOffset + isample]
         
         print(bufs, file=sys.stderr)
 
@@ -535,7 +548,77 @@ class lappdInterface :
             self.rmss[isa] = rms
         #print(self.peds)
         print(self.rmss, file=sys.stderr)
-        return 
+
+    def MeasurePedsROI(self, ch = 0, nev = 5):
+        self.RegWrite(ADCBUFNUMWORDS,1024)
+        self.RegSetBit(MODE, C_MODE_DRS_DENABLE_BIT,1)
+
+        bufs = [[0]*nev for i in range(1024)]
+
+        idrs = int(ch/8)
+
+        for i in range(nev) :
+            print(i, file=sys.stderr)
+            self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
+            time.sleep(0.001)
+            v0   = self.ReadMem(0,1024,ch)
+            stop = self.RegRead(DRSSTOPSAMPLE_0 + 4*idrs)
+            v = v0[1023-stop+1 :] + v0[:1023-stop+1]
+            for isample in range(0,1024) :
+                bufs[isample][i] = v[isample]
+        
+        # print(bufs, file=sys.stderr)
+
+        for isa in range(0,1024):
+            buf = bufs[isa]
+            mean = np.around(np.mean(buf),1)
+            bufx = [(a - mean) for a in bufs[isa]]
+            rms = np.around(np.sqrt(np.mean(np.square(bufx))),1)
+            self.peds_roi[isa] = mean
+            self.rmss_roi[isa] = rms
+        #print(self.peds)
+        # print(self.rmss, file=sys.stderr)
+
+    def DumpEvents(self, nev = 5, ch = 0, fname = 'evdump.txt', reorder = True):
+        self.RegWrite(ADCBUFNUMWORDS,1024)
+        self.RegSetBit(MODE, C_MODE_DRS_DENABLE_BIT,1)
+
+        idrs = int(ch/8)
+        vm = [1024]
+
+        f = open(fname, 'w')
+        f.write('stop/D:a[1024]/D\n')
+        for i in range(nev) :
+            self.RegSetBit(CMD, C_CMD_READREQ_BIT, 1)
+            time.sleep(0.001)
+            v = self.ReadMem(0,1024,ch)
+            stop = self.RegRead(DRSSTOPSAMPLE_0 + 4*idrs)
+            if reorder :
+              # vstr = str(stop) + ' ' + ' '.join(str(x) for x in v[1023-stop+1 :] ) 
+              # vstr += ' ' + ' '.join(str(x) for x in v[:1023-stop+1]) + '\n'
+               #upto = 1024-self.drs4_stop
+               #self.cachedView[self.drs4_stop:] = self.payload[:upto]
+               #self.cachedView[0:self.length - upto] = self.payload[upto:]
+              vm[stop:] = v[:1024-stop]
+              vm[0:stop] = v[1024-stop:]
+              vstr = str(stop) + ' ' + ' '.join(str(x) for x in vm) + '\n'
+
+            else : 
+              vstr = str(stop) + ' ' + ' '.join(str(x) for x in v) + '\n'
+              
+            f.write(vstr)
+            print(i, end = ' ', flush = True)
+        print('\n')
+        f.close()
+
+    def DumpPeds(self,ch = 0,nev = 100) :
+        self.MeasurePeds(ch,nev)
+        self.MeasurePedsROI(ch,nev)
+        f = open('peds.txt','w')
+        f.write('cap : p_f/D : rms_f/D : p_r/D : rms_r/D \n')
+        for i in range(1024) :
+            f.write('%d %0.2f %0.2f %0.2f %0.2f \n' % (i,self.peds[i],self.rmss[i],self.peds_roi[i],self.rmss_roi[i]))
+        f.close()
 
 
     def Initialize(self, doCal = True):
@@ -544,10 +627,15 @@ class lappdInterface :
         print('FW version : %d' % (fwver), file=sys.stderr)
 
         # reset logic
+        self.RegSetBit(MODE,11,1)
+        time.sleep(0.2)
+        self.RegSetBit(MODE,11,0)
+        time.sleep(0.2)
         self.RegWrite(CMD, 1 << C_CMD_RESET_BIT);
 
         # switch external triggering off
-        self.RegSetBit(MODE, C_MODE_EXTTRG_EN_BIT,0);
+        self.RegSetBit(MODE, C_MODE_EXTTRG_EN_BIT, 0);
+        self.RegSetBit(MODE, C_MODE_DRS_TRANS_BIT, 0)
 
         #initialize ADC
         self.AdcReset()
@@ -555,14 +643,15 @@ class lappdInterface :
         self.AdcInitCmd(1) # ADC2
         self.AdcTxTrg()
 
-        self.RegSetBit(CMD, C_CMD_RESET_BIT, 1)
 
         # set DAC voltages
         self.DacIni()
         self.DacSetAll()
 
-
+        # self.RegSetBit(CMD, C_CMD_ADCRDRESET_BIT, 1)
         if fwver >= 100 and doCal : self.CalibrateIDelaysFrameAll()
+        # reset bitslips for ISERDESEs on data lines
+        # self.RegSetBit(CMD, C_CMD_ADCRDRESET_BIT, 1)
         if doCal : self.CalibrateIDelaysDataAll()
 
         self.RegWrite(DRSREFCLKRATIO, self.drsrefclk)
@@ -586,6 +675,10 @@ class lappdInterface :
             print('DRS4 PLL locked', file=sys.stderr)
 
         # tune SRCLK to ADCCLK phase
+        if fwver >= 105 :
+            self.RegWrite(DRSVALIDDELAY, 65) # for the first sample extended
+            self.RegWrite(DRSADCPHASE, 1)
+            self.RegWrite(DRSWAITADDR, 12) 
         if fwver >= 100 :
             self.RegWrite(DRSVALIDDELAY, 36) # for the first sample extended
             self.RegWrite(DRSWAITADDR, 12) 

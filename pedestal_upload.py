@@ -26,7 +26,8 @@ print("Connection to EEVEE @ %s established." % sys.argv[1])
 # We have 1024 pedestals per channel
 # Each register set is a 32bit address and 32bit word
 # 
-maxSetsPerPacket = 1#28
+maxSetsPerPacket = 128
+#board.delay = 1.5
 
 # Preprocess into a single list first, so we can easily split up
 # the transactions
@@ -37,7 +38,7 @@ for chan in aPedestal.mean:
         # Values are stored as signed 16 bit integers.
         # Upload needs to be signed 12 bit integers.
         try:
-            fullPeds.append( (chan, i, ((int(ped) + (1 << 15)) >> 4) - (1 >> 11)) )
+            fullPeds.append( (chan, i, ((int(ped) + (1 << 15)) >> 4) - (1 << 11)) )
         except:
             pass
 
@@ -45,24 +46,35 @@ print("Pedestal list flattened.")
 
 # Now assemble transactions
 count = 0
+tmp = {}
 for chan,i,ped in fullPeds:
 
-    #if count < maxSetsPerPacket:
-    # Multiplication by 4 because 32bits per address
-    addr = lappdIfc.ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
+    if count < maxSetsPerPacket:
+        # Multiplication by 4 because 32bits per address
+        addr = lappdIfc.ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
 
-    # Add a directive to write this puppy
-    board.pokenow(addr, ped)
+        # This method guarantees that only one 'register write'
+        # operation is required to set all these registers
+        tmp[addr] = ped if ped >= 0 else ped + (1<<12)
+        count += 1 
+    else:
+        # Execute the transaction (now clears transactions)
+        board.poke(tmp, silent=True)
+        board.transact()
 
-    #     count += 1 
-    # else:
-    #     # Execute the transaction
-    #     #readback = board.transact()
-
-    print("Sent", chan, i, ped)
+        # Clear it
+        tmp = {}
         
-    # Reset count
-    # count = 0
+        # Reset count
+        count = 0
+
+# Was there any leftover?
+if count > 0 and count < maxSetsPerPacket:
+    # Execute the transaction
+    board.poke(tmp, silent=True)
+    board.transact()
+    
+    print("Sent residual chunt", chan, i, ped)
 
 # Done
 print("Pedestal written.")

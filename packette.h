@@ -61,7 +61,7 @@ struct channel {
   uint16_t total_samples;  // 2 bytes: Total number of samples across all fragments 
   uint16_t drs4_stop;      // 2 bytes: DRS4_STOP value
 
-  uint16_t samples[0];     // 0 length.  Casted pointer to the first sample
+  int16_t samples[0];     // 0 length.  Casted pointer to the first sample
 };
 
 //
@@ -80,17 +80,4 @@ struct packette_transport {
 
 #define BUFSIZE (sizeof(struct packette_transport) + MAX_FRAGMENT_WIDTH*SAMPLE_WIDTH)
 
-////////////////////// CONSTRAINTS ////////////////////////
-//
-//    roi_width * SAMPLE_WIDTH must be a multiple of 8
-//
-//
-// MACROS
-// XXX (these are probably broken right now)
- 
-// Returns a pointer to the head of the Nth event
-#define EVENT(N, packet) ( (unsigned short *) ( (packet).data + ( (sizeof struct channel_block) + (packet).roi_width) * active_channels * (N) ) )
-
-// Returns a pointer to the head of the requested channel of the Nth event if present, otherwise returns NULL
-#define CHANNEL(channel, packet)  ( (unsigned short *) ( (packet).channel_map[(channel)] < 0 ? 0x0 : (packet).channel_map[(channel)]*( (packet).roi_width + (sizeof struct channel_block)) ) )
 

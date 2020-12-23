@@ -90,15 +90,22 @@ if __name__ == '__main__':
                 sumsquares[chan] += psumsquares[chan]
                 counts[chan] += pcounts[chan]
 
+    # For clarity, for explicit casting, and weird issues with assigmnet during computation?
+    avgs = {}
+    stdevs = {}
+    for chan in sums.keys():
+        avgs[chan] = np.empty([1024], dtype=np.int16)
+        stdevs[chan] = np.empty([1024])
+        
     # Compute averages and the average squares
     # We have to do these explicitly, but this takes constant time, instead of scaling like number of events
     for chan in sums.keys():
 
         # Use numpy to vectorize this
-        sums[chan] = sums[chan]/counts[chan]
+        avgs[chan] = np.floor(sums[chan]/counts[chan])
 
         # Also try here
-        sumsquares[chan] = np.sqrt(sumsquares[chan]/counts[chan] - sums[chan]**2)
+        stdevs[chan] = np.sqrt(sumsquares[chan]/counts[chan] - avgs[chan]**2)
 
     # Write out a binary timing file
     import pickle

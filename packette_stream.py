@@ -173,7 +173,7 @@ class packetteRun(object):
             def __str__(self):
 
                 divider = "---------------------------------------\n"
-                msg = ''
+                msg = 'rel_offset: %d\n' % self.rel_offset
                 msg += "drs4_stop: %d\n" \
                        "length: %d\n" \
                        "cacheValid: %s\n"  % (self.drs4_stop, len(self), self.cacheValid)
@@ -463,6 +463,9 @@ class packetteRun(object):
             #     The firmware should never do this to you though...
             chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = payload
 
+            # Debug (set the final relative offset)
+            chan.rel_offset = header['rel_offset']
+
         # Now we've loaded all the payloads, build the cache
         for data in event.channels.values():
             data.buildCache()
@@ -522,6 +525,15 @@ class packetteRun(object):
         # This stores the most recent position where a header read failed
         # (used to update the index on the fly)
         self.fp_indexed = { n : 0 for n in range(len(fnames))}
+
+        # 
+        # UUU Need to save state to index files, so you don't need to rebuild the
+        # index every time.
+        #
+        # XXX Also, it feels like we've loading the entire event stream
+        # which should not be happening.  The only thing that should be loaded
+        # is cache.
+        #
         
         # See if we keep the data on the HD/inside OS buffers
         for fhandle,fp in self.fps.items():

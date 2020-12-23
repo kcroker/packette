@@ -28,7 +28,7 @@ def pedestalAccumulator(fname):
 
     # Open the packette run (with view set to capacitor ordering)
     events = packette.packetteRun(fname, SCAView=True)
-
+    
     # Get an event
     firstevent = iter(events).__next__()
 
@@ -64,7 +64,7 @@ def pedestalAccumulator(fname):
             counts[chan] += valid
 
     # We've processed all we could, ship it back
-    return (sums, sumsquares, counts)
+    return (sums, sumsquares, counts, events.board_id)
 
 #
 # Entry point for the calibrator
@@ -78,7 +78,7 @@ if __name__ == '__main__':
 
     print("pedestal_calibration.py: ... workers complete.")
 
-    for psums, psumsquares, pcounts in results:        
+    for psums, psumsquares, pcounts, board_id in results:        
         # Accumulate into the first responder
         if len(sums.keys()) == 0:
             sums = psums
@@ -102,4 +102,4 @@ if __name__ == '__main__':
 
     # Write out a binary timing file
     import pickle
-    pickle.dump(pedestal(sums, sumsquares, counts), open("boardid.pedestal", 'wb'))
+    pickle.dump(pedestal(sums, sumsquares, counts), open("%s.pedestal" % board_id.hex(), 'wb'))

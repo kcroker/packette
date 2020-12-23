@@ -4,6 +4,7 @@ import sys
 #import time
 import pickle
 from os import kill,environ
+import numpy as np
 
 # Do not ask me why this needs to be included now...
 sys.path.append("./eevee")
@@ -38,7 +39,7 @@ for chan in aPedestal.mean:
         # Values are stored as signed 16 bit integers.
         # Upload needs to be signed 12 bit integers.
         try:
-            fullPeds.append( (chan, i, ((int(ped) + (1 << 15)) >> 4) - (1 << 11)) )
+            fullPeds.append( (chan, i, ( (np.int64(ped) & 0xFFFF) >> 4)) )
         except:
             pass
 
@@ -55,7 +56,7 @@ for chan,i,ped in fullPeds:
 
         # This method guarantees that only one 'register write'
         # operation is required to set all these registers
-        tmp[addr] = ped if ped >= 0 else ped + (1<<12)
+        tmp[addr] = ped if ped >= 0 else ped + 0xFFF + 1
         count += 1 
     else:
         # Execute the transaction (now clears transactions)

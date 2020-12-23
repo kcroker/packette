@@ -19,10 +19,10 @@ for chan in aPedestal.mean:
     #fmt = lambda x: x if not x is None else float('nan')
     
     for mean, var, count in zip(aPedestal.mean[chan], aPedestal.rms[chan], aPedestal.counts[chan]):
-        mean12 = ((int(mean) + (1 << 15)) >> 4) - (1 << 11)
-        var12 = ((int(var) + (1 << 15)) >> 4) - (1 << 11) if not np.isnan(var) else 0
+        mean12 = (np.int64(mean) & 0xFFFF) >> 4
+        var12 = (np.int64(var) & 0xFFFF) >> 4 if not np.isnan(var) else 0
         
-        print("%d %e %e %d %d" % (n, mean12, var12, chan, count))
+        print("%d %d %d %d %d" % (n, mean12, var12, chan, count))
         n += 1
 
     # Break on channel

@@ -109,4 +109,4 @@ if __name__ == '__main__':
 
     # Write out a binary timing file
     import pickle
-    pickle.dump(pedestal(sums, sumsquares, counts), open("%s.pedestal" % board_id.hex(), 'wb'))
+    pickle.dump(pedestal(avgs, stdevs, counts), open("%s.pedestal" % board_id.hex(), 'wb'))

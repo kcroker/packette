@@ -81,7 +81,7 @@ ifc = None
 def connect(parser):
 
     global ifc
-    
+
     # Parse the arguments
     args = parser.parse_args()
 

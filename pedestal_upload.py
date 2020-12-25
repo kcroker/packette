@@ -1,7 +1,5 @@
 #!/usr/bin/python3
-#import numpy as np
 import sys
-#import time
 import pickle
 from os import kill,environ
 import numpy as np
@@ -28,46 +26,33 @@ print("Connection to EEVEE @ %s established." % sys.argv[1])
 # Each register set is a 32bit address and 32bit word
 # 
 maxSetsPerPacket = 128
-#board.delay = 1.5
 
-# Preprocess into a single list first, so we can easily split up
-# the transactions
-fullPeds = []
+count = 0
+tmp = {}
 for chan in aPedestal.mean:
     for i, ped in enumerate(aPedestal.mean[chan]):
 
-        # Values are stored as signed 16 bit integers.
-        # Upload needs to be signed 12 bit integers.
-        try:
-            fullPeds.append( (chan, i, ( (np.int64(ped) & 0xFFFF) >> 4)) )
-        except:
-            pass
+        # Multiplication by 4 because 32bits per address
+        addr = lappdIfc.ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
 
-print("Pedestal list flattened.")
-
-# Now assemble transactions
-count = 0
-tmp = {}
-for chan,i,ped in fullPeds:
-
-    # Multiplication by 4 because 32bits per address
-    addr = lappdIfc.ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
-
-    # This method guarantees that only one 'register write'
-    # operation is required to set all these registers
-    tmp[addr] = ped if ped >= 0 else ped + 0xFFF + 1
-    count += 1 
-
-    if count == maxSetsPerPacket:
-        # Execute the transaction (now clears transactions)
-        board.poke(tmp, silent=True)
-        board.transact()
-
-        # Clear it
-        tmp = {}
+        # Truncate it
+        ped = (np.int64(ped) & 0xFFFF) >> 4
         
-        # Reset count
-        count = 0
+        # This method guarantees that only one 'register write'
+        # operation is required to set all these registers
+        tmp[addr] = ped if ped >= 0 else ped + 0xFFF + 1
+        count += 1 
+
+        if count == maxSetsPerPacket:
+            # Execute the transaction (now clears transactions)
+            board.poke(tmp, silent=True)
+            board.transact()
+
+            # Clear it
+            tmp = {}
+        
+            # Reset count
+            count = 0
 
 # Was there any leftover?
 if count > 0 and count < maxSetsPerPacket:

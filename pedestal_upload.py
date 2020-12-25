@@ -50,15 +50,15 @@ count = 0
 tmp = {}
 for chan,i,ped in fullPeds:
 
-    if count < maxSetsPerPacket:
-        # Multiplication by 4 because 32bits per address
-        addr = lappdIfc.ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
+    # Multiplication by 4 because 32bits per address
+    addr = lappdIfc.ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
 
-        # This method guarantees that only one 'register write'
-        # operation is required to set all these registers
-        tmp[addr] = ped if ped >= 0 else ped + 0xFFF + 1
-        count += 1 
-    else:
+    # This method guarantees that only one 'register write'
+    # operation is required to set all these registers
+    tmp[addr] = ped if ped >= 0 else ped + 0xFFF + 1
+    count += 1 
+
+    if count == maxSetsPerPacket:
         # Execute the transaction (now clears transactions)
         board.poke(tmp, silent=True)
         board.transact()

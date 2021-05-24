@@ -4,18 +4,28 @@ import cmd, sys, subprocess
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 import packette_stream as packette
+import argparse
 import numpy as np
 
-if len(sys.argv) < 2:
-    print("Please specify a set of packette run files")
-    exit(1)
-    
+parser = argparse.ArgumentParser(description='Realtime packette data inspector. Can browse existing packette data files or (slowly) capture and new, single-port, streams')
+parser.add_argument('--capture', action='store_true', help='Interpret arguments as an IP address and UDP port to listen at')
+parser.add_argument('fnames', type=str, nargs='+', help='Files to load or IP address and port')
+
+args = parser.parse_args()
+
+if args.capture:
+    try:
+        args.fnames = (args.fnames[0], int(args.fnames[1]))
+    except ValueError as e:
+        print("ERROR: Could not interpret %s as a port" % args.fnames[1])
+        exit(1)
+        
 # Load some events
-events = packette.packetteRun(sys.argv[1:], SCAView=True)
+events = packette.packetteRun(args.fnames, SCAView=True)
 
 # Display some information
 #board_id = ':'.join(events.board_id.hex()[i:i+2] for i in range(0,12,2))
-print("Browsing run described by: %s\n" % sys.argv[1:])
+print("Browsing run described by: %s\n" % args.fnames)
 
 run = list(enumerate(events))
 

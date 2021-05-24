@@ -27,6 +27,8 @@ import math
 import numpy as np
 import sys
 import os
+import time
+import socket
 
 from collections import namedtuple, OrderedDict
 
@@ -67,237 +69,325 @@ empty_payload = np.full([1024], NOT_DATA, dtype=np.int16)
 np.set_printoptions(formatter = {'int' : lambda x : '%5d' % x})
 
 # TODO: Implement readahead
+        
+# This acts like an array access, except
+# it returns NO_DATA for values that are not
+# defined 
+class packetteChannel(object):
+
+    # data is a numpy array
+    def __init__(self, drs4_stop, payload, run):
+        self.drs4_stop = drs4_stop
+        self.payload = payload
+        self.run = run
+        self.length = len(payload)
+        self.masks = []
+
+        # Now, make a full array view for fast access
+        self.cachedView = np.full([1024], NOT_DATA, dtype=np.int16) 
+
+        # Invalidate the cache, so that we have to build it
+        self.cacheValid = False
+
+    # Length
+    def __len__(self):
+        return self.length
+
+    # Return the data if its there, otherwise return NO_DATA
+    def __getitem__(self, i):
+
+        # If cache is valid, return directly
+        if not self.cacheValid:
+            self.buildCache()
+
+        return self.cachedView[i]
+
+    #
+    # The strategy to do fast computations is that iterators and arithmetic operations
+    # always return the cached view.  So you're working directly with numpy primatives
+    #
+    def __iter__(self):
+        # Return the iterator of the cachedView
+        return iter(self.cachedView)
+
+    def __inv__(self, x):
+        return ~self.cachedView
+
+    def __and__(self, x):
+        return self.cachedView & x
+
+    def __or__(self, x):
+        return self.cachedView | x
+
+    def __mul__(self, x):
+        # Multiply the cachedViews.  Allows to vectorize the channels
+        if isinstance(x, packetteRun.packetteEvent.packetteChannel):
+            return self.cachedView * x.cachedView
+        else:
+            return self.cachedView * x
+
+    # Dump the channel stop, mask, and contents
+    def __str__(self):
+
+        divider = "---------------------------------------\n"
+        msg = 'rel_offset: %d\n' % self.rel_offset
+        msg += "drs4_stop: %d\n" \
+               "length: %d\n" \
+               "cacheValid: %s\n"  % (self.drs4_stop, len(self), self.cacheValid)
+        msg += divider
+        msg += "masks:\n"
+        if len(self.masks) > 0:
+            for mask in self.masks:
+                msg += str(mask) + "\n"
+        else:
+            msg += "None"
+
+        msg += "\n" + divider
+        msg += "payload (raw):\n"
+        msg += dumpPayload(self.payload)
+        msg += "\n" + divider
+        msg += "cachedView:\n"
+        msg += dumpCachedView(self.cachedView)
+
+        return msg
+
+    def mask(self, low, high):
+
+        # Nop
+        if low == high:
+            return
+
+        # Check for sanity
+        if low > high:
+            raise ValueError("Low end of mask needs to exceed the high end of the mask")
+        elif high - low > 1024:
+            raise ValueError("Specified mask exceeds length of capacitor array")
+        elif low < 0 and high < 0:
+            raise ValueError("Don't be obnoxious")
+
+        # Now check for negative masks
+        if low < 0:
+            self.masks.append((1024 + low, 1024))
+            self.masks.append((0, high))
+        elif high > 1023:
+            self.masks.append((low, 1024))
+            self.masks.append((0, high-1024))
+        else:
+            self.masks.append((low, high))
+
+    def clearMasks(self):
+        self.masks = []
+        self.buildCache()
+
+    def masksToSCA(self):
+        newmasks = []
+
+        for low, high in self.masks:
+            low += self.drs4_stop
+            high += self.drs4_stop
+
+            if low > 1024 and high > 1024:
+                # We completely overflowed, wrap around
+                low = 1024 - low
+                high = 1024 - high
+                newmasks.append((low,high))
+            elif high > 1024:
+                # We partially overflowed, so we need two masks now
+                newmasks.append((low, 1024))
+                newmasks.append((0, high - 1024))
+            else:
+                newmasks.append((low, high))
+
+        # Replace the old masks
+        self.masks = newmasks
+
+    def masksToTime(self):
+        newmasks = []
+
+        for low, high in self.masks:
+            low -= self.drs4_stop
+            high -= self.drs4_stop
+
+            if low < 0 and high < 0:
+                # We completely underflowed, wrap around
+                prevhigh = high
+                high = low + 1024
+                low = prevhigh + 1024
+                newmasks.append((low, high))
+            elif low < 0:
+                # We partially underflowed, so we need two masks now
+                newmasks.append((1024+low, 1023))
+                newmasks.append((0, high))
+            else:
+                newmasks.append((low, high))
+
+        self.masks = newmasks
+
+    def buildCache(self):
+
+        # Invalidate the cache
+        self.cacheValid = False
+
+        # Cleanse the the cachedView
+        self.cachedView.fill(NOT_DATA)
+
+        # Write the payload into the appropriate location into the cache
+        if self.run.SCAView:
+            # Capacitor ordering
+
+            # First write up to the end
+            if self.length > 1024-self.drs4_stop:
+                upto = 1024-self.drs4_stop
+                self.cachedView[self.drs4_stop:] = self.payload[:upto]
+                self.cachedView[0:self.length - upto] = self.payload[upto:]
+            else:
+                # No wraparound required
+                self.cachedView[self.drs4_stop:self.drs4_stop + self.length] = self.payload
+        else:
+            # Time ordering
+            self.cachedView[0:self.length] = self.payload
+
+        # Now apply masking
+        for low,high in self.masks:
+            self.cachedView[low:high] = MASKED_DATA
+
+        # Now always pull from cache
+        self.cacheValid = True
+
+# The simple container class, contains a list of packette_channel objects
+# These are backed by numpy arrays, but support indexing beyond the present data
+class packetteEvent(object):
+
+    def __init__(self, header, run):
+        self.channels = {}
+        self.run = run
+        self.event_num = header['event_num']
+        self.trigger_low = header['trigger_low']
+
+        # For every channel thats on in the mask, make a dictionary entry to it
+        chan = 0
+        while chan < 64:
+            # print("mask: %x, channel: %d" % (header['channel_mask'], chan))
+
+            if header['channel_mask'] & 0x1:
+                self.channels[chan] = packetteChannel(0, np.empty([0], dtype=np.int16), self.run)
+
+            # Advance to the next place in the mask
+            header['channel_mask'] >>= 1
+            chan += 1
+
+    def __str__(self):
+        board_id = ':'.join(self.run.board_id.hex()[i:i+2] for i in range(0,12,2))
+        msg = "\nBoard MAC:\t %s\n" % board_id
+        msg += "Event number:\t %d\n" % self.event_num
+        msg += "Timestamp:\t %d\n" % self.trigger_low
+        msg += "Channels:\n "
+
+        chans = list(self.channels.keys())
+        drsstr = ''
+        for drs in range(8):
+            drsstr += "\tDRS%d: [" % drs
+            for chan in range(8):
+                if drs*8+chan in chans:
+                    drsstr += '%3d' % (drs*8+chan)
+                else:
+                    drsstr += ' . '
+            drsstr += " ]\n"
+
+        msg += drsstr
+        return msg
 
 class packetteRun(object):
 
-    # The simple event class, contains a list of packette_channel objects
-    # These are backed by numpy arrays, but support indexing beyond the present data
-    class packetteEvent(object):
+    # Initialize and load the files
+    def __init__(self, fnames, SCAView=False):
 
-        def __init__(self, header, run):
-            self.channels = {}
-            self.run = run
-            self.event_num = header['event_num']
-            self.trigger_low = header['trigger_low']
-            
-            # For every channel thats on in the mask, make a dictionary entry to it
-            chan = 0
-            while chan < 64:
-                # print("mask: %x, channel: %d" % (header['channel_mask'], chan))
-                
-                if header['channel_mask'] & 0x1:
-                    self.channels[chan] = self.packetteChannel(0, np.empty([0], dtype=np.int16), self.run)
+        # NOTE: fnames is assumed to be sorted in the order you want to deinterlace in!
+        # Check for stdin
+        self.header_size = packette_transport.size
+        self.board_id = None
+        self.eventlists = []
+        self.offsetTable = {}
+        self.eventCache = OrderedDict()
 
-                # Advance to the next place in the mask
-                header['channel_mask'] >>= 1
-                chan += 1
-
-        def __str__(self):
-            board_id = ':'.join(self.run.board_id.hex()[i:i+2] for i in range(0,12,2))
-            msg = "\nBoard MAC:\t %s\n" % board_id
-            msg += "Event number:\t %d\n" % self.event_num
-            msg += "Timestamp:\t %d\n" % self.trigger_low
-            msg += "Channels:\n "
-
-            chans = list(self.channels.keys())
-            drsstr = ''
-            for drs in range(8):
-                drsstr += "\tDRS%d: [" % drs
-                for chan in range(8):
-                    if drs*8+chan in chans:
-                        drsstr += '%3d' % (drs*8+chan)
-                    else:
-                        drsstr += ' . '
-                drsstr += " ]\n"
-
-            msg += drsstr
-            return msg
+        self.SCAView = SCAView
         
-        # This acts like an array access, except
-        # it returns NO_DATA for values that are not
-        # defined 
-        class packetteChannel(object):
+        # We usually expect lists.  If its a one off, check for special conditions.
+        # If not, wrap it in a list
+        if not isinstance(fnames, list):
 
-            # data is a numpy array
-            def __init__(self, drs4_stop, payload, run):
-                self.drs4_stop = drs4_stop
-                self.payload = payload
-                self.run = run
-                self.length = len(payload)
-                self.masks = []
+            if fnames == '-':
+                raise Exception("Cannot seek on stdin.  Start taking data to a backing file, and specify that file to work in real-time")
+
+            # Try to parse fnames as a python socket specifier
+            # e.g. ('127.0.0.1', 3445) 
+            if (isinstance(fnames, tuple)
+                and len(fnames) == 2
+                and isinstance(fnames[0], str)
+                and isinstance(fnames[1], int)):
+
+                # (Parent will not use s or tmpfile)
                 
-                # Now, make a full array view for fast access
-                self.cachedView = np.full([1024], NOT_DATA, dtype=np.int16) 
+                # Let the OSError exception propogate upwards if it happens
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(fnames)
 
-                # Invalidate the cache, so that we have to build it
-                self.cacheValid = False
-                
-            # Length
-            def __len__(self):
-                return self.length
+                # Socket is up, create the filename for the backing file
+                # and open it (so we make sure not to race here)
+                fnames = ['packetteRun_%s_%d_%f.dat' % (fnames[0], fnames[1], time.time())]
+                tmpfile = open(fnames[0], 'wb')
 
-            # Return the data if its there, otherwise return NO_DATA
-            def __getitem__(self, i):
-
-                # If cache is valid, return directly
-                if not self.cacheValid:
-                    self.buildCache()
+                # Now fork
+                pid = os.fork()
+                if not pid:
+                    # We are childlike, dump everything into the file
+                    try:
+                        while True:
+                            # Since its a datagram, this will block until an entire packet is pulled
+                            # from the underlying buffers
+                            stuff = s.recv(4096)
+                            tmpfile.write(stuff)
+                    except OSError as e:
+                        print("Data capture process encountered trouble: ", e)
+                    finally:
+                        # Always close out the backing file
+                        tmpfile.close()
+                else:
+                    # We are the parent
+                    print("Successfully forked data capture PID %d, writing to %s..." % (pid, fnames[0]), file=sys.stderr)
                     
-                return self.cachedView[i]
-
-            #
-            # The strategy to do fast computations is that iterators and arithmetic operations
-            # always return the cached view.  So you're working directly with numpy primatives
-            #
-            def __iter__(self):
-                # Return the iterator of the cachedView
-                return iter(self.cachedView)
-
-            def __inv__(self, x):
-                return ~self.cachedView
-
-            def __and__(self, x):
-                return self.cachedView & x
-
-            def __or__(self, x):
-                return self.cachedView | x
-            
-            def __mul__(self, x):
-                # Multiply the cachedViews.  Allows to vectorize the channels
-                if isinstance(x, packetteRun.packetteEvent.packetteChannel):
-                    return self.cachedView * x.cachedView
-                else:
-                    return self.cachedView * x
-                
-            # Dump the channel stop, mask, and contents
-            def __str__(self):
-
-                divider = "---------------------------------------\n"
-                msg = 'rel_offset: %d\n' % self.rel_offset
-                msg += "drs4_stop: %d\n" \
-                       "length: %d\n" \
-                       "cacheValid: %s\n"  % (self.drs4_stop, len(self), self.cacheValid)
-                msg += divider
-                msg += "masks:\n"
-                if len(self.masks) > 0:
-                    for mask in self.masks:
-                        msg += str(mask) + "\n"
-                else:
-                    msg += "None"
-                    
-                msg += "\n" + divider
-                msg += "payload (raw):\n"
-                msg += dumpPayload(self.payload)
-                msg += "\n" + divider
-                msg += "cachedView:\n"
-                msg += dumpCachedView(self.cachedView)
-                
-                return msg
-
-            def mask(self, low, high):
-
-                # Nop
-                if low == high:
-                    return
-                
-                # Check for sanity
-                if low > high:
-                    raise ValueError("Low end of mask needs to exceed the high end of the mask")
-                elif high - low > 1024:
-                    raise ValueError("Specified mask exceeds length of capacitor array")
-                elif low < 0 and high < 0:
-                    raise ValueError("Don't be obnoxious")
-                
-                # Now check for negative masks
-                if low < 0:
-                    self.masks.append((1024 + low, 1024))
-                    self.masks.append((0, high))
-                elif high > 1023:
-                    self.masks.append((low, 1024))
-                    self.masks.append((0, high-1024))
-                else:
-                    self.masks.append((low, high))
-
-            def clearMasks(self):
-                self.masks = []
-                self.buildCache()
-
-            def masksToSCA(self):
-                newmasks = []
-
-                for low, high in self.masks:
-                    low += self.drs4_stop
-                    high += self.drs4_stop
-
-                    if low > 1024 and high > 1024:
-                        # We completely overflowed, wrap around
-                        low = 1024 - low
-                        high = 1024 - high
-                        newmasks.append((low,high))
-                    elif high > 1024:
-                        # We partially overflowed, so we need two masks now
-                        newmasks.append((low, 1024))
-                        newmasks.append((0, high - 1024))
-                    else:
-                        newmasks.append((low, high))
-
-                # Replace the old masks
-                self.masks = newmasks
-
-            def masksToTime(self):
-                newmasks = []
-
-                for low, high in self.masks:
-                    low -= self.drs4_stop
-                    high -= self.drs4_stop
-
-                    if low < 0 and high < 0:
-                        # We completely underflowed, wrap around
-                        prevhigh = high
-                        high = low + 1024
-                        low = prevhigh + 1024
-                        newmasks.append((low, high))
-                    elif low < 0:
-                        # We partially underflowed, so we need two masks now
-                        newmasks.append((1024+low, 1023))
-                        newmasks.append((0, high))
-                    else:
-                        newmasks.append((low, high))
-
-                self.masks = newmasks
+        # Now the previous machinery should work, just on the backing file
+        self.fnames = fnames
+        self.fps = {}
+        self.fp_indexed = {}
         
-            def buildCache(self):
+        # This stores integer handles to file pointers that back the event data
+        self.fps = { n : open(f, 'rb') for n,f in enumerate(fnames)}
 
-                # Invalidate the cache
-                self.cacheValid = False
+        # This stores the most recent position where a header read failed
+        # (used to update the index on the fly)
+        self.fp_indexed = { n : 0 for n in range(len(fnames))}
 
-                # Cleanse the the cachedView
-                self.cachedView.fill(NOT_DATA)
+        # 
+        # UUU Need to save state to index files, so you don't need to rebuild the
+        # index every time.
+        #
+        # XXX Also, it feels like we've loading the entire event stream
+        # which should not be happening.  The only thing that should be loaded
+        # is cache.
+        #
+        
+        # See if we keep the data on the HD/inside OS buffers
+        for fhandle,fp in self.fps.items():
 
-                # Write the payload into the appropriate location into the cache
-                if self.run.SCAView:
-                    # Capacitor ordering
-                    
-                    # First write up to the end
-                    if self.length > 1024-self.drs4_stop:
-                        upto = 1024-self.drs4_stop
-                        self.cachedView[self.drs4_stop:] = self.payload[:upto]
-                        self.cachedView[0:self.length - upto] = self.payload[upto:]
-                    else:
-                        # No wraparound required
-                        self.cachedView[self.drs4_stop:self.drs4_stop + self.length] = self.payload
-                else:
-                    # Time ordering
-                    self.cachedView[0:self.length] = self.payload
-                    
-                # Now apply masking
-                for low,high in self.masks:
-                    self.cachedView[low:high] = MASKED_DATA
-                    
-                # Now always pull from cache
-                self.cacheValid = True
-                    
-                    
+            # Didn't seem to work...
+            # Make sure we get the most recent jazz
+            # os.fsync(fp.fileno())
+
+            # Send it the 0 index, since this is the first time we are building the index
+            self.offsetTable.update(self.parseOffsets(fp, fhandle, 0))
+            print("packette_stream.py: built event index for %s" % fnames[fhandle], file=sys.stderr)
+
     def parseOffsets(self, fp, fhandle, index):
         # This will index event byte boundaries in the underlying stream
         # Lookups can then be done by seeking in the underlying stream
@@ -318,7 +408,7 @@ class packetteRun(object):
             if len(header) < packette_transport.size:
                 index -= self.header_size
                 break
-
+            
             # Unpack it and make a dictionary out of it
             header = dict(zip(field_list, packette_transport.unpack(header)))
 
@@ -326,8 +416,7 @@ class packetteRun(object):
             if self.board_id is None:
                 self.board_id = header['board_id']
             elif not self.board_id == header['board_id']:
-                print(self.board_id)
-                print(header['board_id'])
+                print("packette_stream.py: Expecting %s but just read %s..." % (self.board_id, header['board_id']), file=sys.stderr)
                 
                 raise Exception("ERROR: Heterogenous board identifiers in multifile event stream.\n " \
                                 "\tOutput from different boards should be directed to\n " \
@@ -420,7 +509,7 @@ class packetteRun(object):
             if event is None:
                 # Remember where we are at
                 prev_event_num = header['event_num']
-                event = self.packetteEvent(header, self)
+                event = packetteEvent(header, self)
             
             # If we've read past the event, return the completed event
             if prev_event_num < header['event_num']:
@@ -495,57 +584,6 @@ class packetteRun(object):
     def getnth(self, index):
         pass
     
-    # Initialize and load the files
-    def __init__(self, fnames, SCAView=False):
-
-        # NOTE: fnames is assumed to be sorted in the order you want to deinterlace in!
-        # Check for stdin
-        self.header_size = packette_transport.size
-        self.board_id = None
-        self.eventlists = []
-        self.offsetTable = {}
-        self.eventCache = OrderedDict()
-
-        self.SCAView = SCAView
-        
-        # We usually expect lists.  If its a one off, wrap it in a list
-        if not isinstance(fnames, list):
-            fnames = [fnames]
-        
-        self.fnames = fnames
-        self.fps = {}
-        self.fp_indexed = {}
-        
-        if fnames == ['-']:
-            raise Exception("Cannot seek on stdin.  Start taking data to a backing file, and specify that file to work in real-time")
-            
-        # This stores integer handles to file pointers that back the event data
-        self.fps = { n : open(f, 'rb') for n,f in enumerate(fnames)}
-
-        # This stores the most recent position where a header read failed
-        # (used to update the index on the fly)
-        self.fp_indexed = { n : 0 for n in range(len(fnames))}
-
-        # 
-        # UUU Need to save state to index files, so you don't need to rebuild the
-        # index every time.
-        #
-        # XXX Also, it feels like we've loading the entire event stream
-        # which should not be happening.  The only thing that should be loaded
-        # is cache.
-        #
-        
-        # See if we keep the data on the HD/inside OS buffers
-        for fhandle,fp in self.fps.items():
-
-            # Didn't seem to work...
-            # Make sure we get the most recent jazz
-            # os.fsync(fp.fileno())
-
-            # Send it the 0 index, since this is the first time we are building the index
-            self.offsetTable.update(self.parseOffsets(fp, fhandle, 0))
-            print("packette_stream.py: built event index for %s" % fnames[fhandle], file=sys.stderr)
-
     # For underlying streams that are growing, we can update the index
     def updateIndex(self):
         # Start parsing offsets at the last successful spot
@@ -677,7 +715,7 @@ def test():
     # Now switch to time ordered
     events.setSCAView(False)
     
-        # Look at it using native dumps
+    # Look at it using native dumps
     for event in events:
         for chan,data in event.channels.items():
             print("event %d, channel %d\n" % (event.event_num, chan))

@@ -25,7 +25,7 @@ events = packette.packetteRun(args.fnames, SCAView=True)
 
 # Display some information
 #board_id = ':'.join(events.board_id.hex()[i:i+2] for i in range(0,12,2))
-print("Browsing run described by: %s\n" % args.fnames)
+print("Browsing run described by: ", args.fnames)
 
 run = list(enumerate(events))
 

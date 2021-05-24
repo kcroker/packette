@@ -1,3 +1,6 @@
 [submodule "eevee"]
 	path = eevee
 	url = https://github.com/kcroker/eevee
+[submodule "lappd_ifc"]
+	path = lappd_ifc
+	url = https://github.com/vsheb/lappd_ifc

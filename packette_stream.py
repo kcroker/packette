@@ -29,6 +29,7 @@ import sys
 import os
 import time
 import socket
+import select
 
 from collections import namedtuple, OrderedDict
 
@@ -307,7 +308,7 @@ class packetteRun(object):
         self.header_size = packette_transport.size
         self.board_id = None
         self.eventlists = []
-        self.offsetTable = {}
+        self.offsetTable = OrderedDict()
         self.eventCache = OrderedDict()
 
         self.SCAView = SCAView
@@ -330,23 +331,38 @@ class packetteRun(object):
                 
                 # Let the OSError exception propogate upwards if it happens
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(fnames)
+
+                # Timeout after 1 second
+                s.settimeout(1.0)
+                
+                # Listen to the socket
+                s.bind(fnames)
 
                 # Socket is up, create the filename for the backing file
                 # and open it (so we make sure not to race here)
                 fnames = ['packetteRun_%s_%d_%f.dat' % (fnames[0], fnames[1], time.time())]
-                tmpfile = open(fnames[0], 'wb')
 
+                # Open the destination file as unbuffered, so each time we write
+                # the actual data goes into the file
+                tmpfile = open(fnames[0], 'wb', 0)
+
+                # Stash parent pid
+                ppid = os.getpid()
+                
                 # Now fork
                 pid = os.fork()
                 if not pid:
                     # We are childlike, dump everything into the file
                     try:
-                        while True:
-                            # Since its a datagram, this will block until an entire packet is pulled
-                            # from the underlying buffers
-                            stuff = s.recv(4096)
-                            tmpfile.write(stuff)
+                        while True:                            
+                            try:
+                                # Since its a datagram, this will block until timeout or an entire packet is pulled
+                                # from the underlying buffers
+                                stuff = s.recv(4096)
+                                tmpfile.write(stuff)
+                            except socket.timeout as e:
+                                if not os.getppid() == ppid:
+                                    exit(0)
                     except OSError as e:
                         print("Data capture process encountered trouble: ", e)
                     finally:
@@ -385,7 +401,8 @@ class packetteRun(object):
             # os.fsync(fp.fileno())
 
             # Send it the 0 index, since this is the first time we are building the index
-            self.offsetTable.update(self.parseOffsets(fp, fhandle, 0))
+            # parseOffsets mutates the offsetTable directly
+            self.parseOffsets(fp, fhandle, 0)
             print("packette_stream.py: built event index for %s" % fnames[fhandle], file=sys.stderr)
 
     def parseOffsets(self, fp, fhandle, index):
@@ -393,7 +410,7 @@ class packetteRun(object):
         # Lookups can then be done by seeking in the underlying stream
         # Start loading in event data
         prev_event_num = -1
-        offsetTable = {}
+        #offsetTable = {}
 
         # Yikes, forgot to do the initial seek
         fp.seek(index)
@@ -422,7 +439,7 @@ class packetteRun(object):
                                 "\tOutput from different boards should be directed to\n " \
                                 "\tdistinct packette instances on disjoint port ranges")
 
-            # This logic is being weird.  Be explicit
+            # This logic is being weird.  Be explicit.
             if index == self.header_size or prev_event_num < header['event_num']:
                 # Return a tuple with the stream and the byte position within the stream
                 self.offsetTable[header['event_num']] = (fhandle, index - self.header_size)
@@ -437,8 +454,6 @@ class packetteRun(object):
         # Set the most recently successful read
         self.fp_indexed[fhandle] = index
         
-        return offsetTable
-
     # Time ordered views return capacitor DRS4_STOP when requesting index 0
     # Capacitor ordered views return capacitor 0 when requesting index 0
     def setSCAView(self, flag):
@@ -552,6 +567,7 @@ class packetteRun(object):
             #     The firmware should never do this to you though...
             chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = payload
 
+            # print("\tHEY Got a rel_offset: ", header['rel_offset'], file=sys.stderr)
             # Debug (set the final relative offset)
             chan.rel_offset = header['rel_offset']
 
@@ -582,7 +598,7 @@ class packetteRun(object):
     #  so I need to shift to this)
     #
     def getnth(self, index):
-        pass
+        return self[next(iter(self.offsetTable.keys))]
     
     # For underlying streams that are growing, we can update the index
     def updateIndex(self):

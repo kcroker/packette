@@ -1,23 +1,23 @@
 #!/usr/bin/python3
-import sys
+from sys import argv,path
 import pickle
-from os import kill,environ
-import numpy as np
+from os import environ
+#import numpy as np
 
 # Do not ask me why this needs to be included now...
-sys.path.append("./eevee")
+path.append("./eevee")
 environ['EEVEE_SRC_PATH'] = "./eevee"
 
-import lappdIfc            # Board+firmware *specific* stuff
+from lappdIfc import ADDR_PEDMEM_OFFSET
 import eevee
 
 # 1) Load the pedestal
-aPedestal = pickle.load(open(sys.argv[2], "rb"))
-print("Pedestal file %s loaded." % sys.argv[2])
+aPedestal = pickle.load(open(argv[2], "rb"))
+print("Pedestal file %s loaded." % argv[2])
 
 # 1.5) Connect to the board
-board = eevee.board(sys.argv[1])
-print("Connection to EEVEE @ %s established." % sys.argv[1])
+board = eevee.board(argv[1])
+print("Connection to EEVEE @ %s established." % argv[1])
 
 # 2) Iterate through
 #
@@ -33,10 +33,10 @@ for chan in aPedestal.mean:
     for i, ped in enumerate(aPedestal.mean[chan]):
 
         # Multiplication by 4 because 32bits per address
-        addr = lappdIfc.ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
+        addr = ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
 
         # Truncate it
-        ped = (np.int64(ped) & 0xFFFF) >> 4
+        ped = (int(ped) & 0xFFFF) >> 4
         
         # This method guarantees that only one 'register write'
         # operation is required to set all these registers

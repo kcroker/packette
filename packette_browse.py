@@ -6,6 +6,8 @@ from matplotlib.collections import LineCollection
 import packette_stream as packette
 import argparse
 import numpy as np
+import os
+import readline
 
 parser = argparse.ArgumentParser(description='Realtime packette data inspector. Can browse existing packette data files or (slowly) capture and new, single-port, streams')
 parser.add_argument('--capture', action='store_true', help='Interpret arguments as an IP address and UDP port to listen at')
@@ -26,6 +28,8 @@ events = packette.packetteRun(args.fnames, SCAView=True)
 # Display some information
 #board_id = ':'.join(events.board_id.hex()[i:i+2] for i in range(0,12,2))
 print("Browsing run described by: ", args.fnames)
+
+histf = '.packette_browse_history'
 
 run = list(enumerate(events))
 
@@ -217,10 +221,10 @@ def execute(args):
     print(str(results.stdout))
     
 class PacketteShell(cmd.Cmd):
-    global event, pos
+    global event, pos, run
     
     intro = 'Welcome to packette better_browse.   Type help or ? to list commands.\n'
-    prompt_text = "Event #%d @ %d (packette) " 
+    prompt_text = "Event #%d @ %d of %d (packette) " 
     
     file = None
 
@@ -250,7 +254,7 @@ class PacketteShell(cmd.Cmd):
         'Jump to an arbitrary event position within the stream:  jump 5'
         jump(arg)
     def do_cmd(self, arg):
-        'cmd ./A2x_tool.py <whatever>: e.g. -I -N 20 10.0.6.97 to initialize the board at 10.0.6.97 and then request 20 soft triggers at the default rate'
+        'Runs ./A2x_tool.py <whatever>: e.g. cmd -I -N 20 10.0.6.97 to initialize the board at 10.0.6.97 and then request 20 soft triggers at the default rate'
         execute(arg)
     def do_refresh(self, arg):
         'Rebuild stream index and jump to most recent event: refresh'
@@ -279,7 +283,7 @@ class PacketteShell(cmd.Cmd):
         global event, pos, i
 
         if not event is None:
-            self.prompt = self.prompt_text % (event.event_num, pos)
+            self.prompt = self.prompt_text % (event.event_num, pos, len(run))
         else:
             print(" -- No events in run yet.  Take data and refresh. -- ")
 
@@ -289,12 +293,24 @@ class PacketteShell(cmd.Cmd):
 
     def preloop(self):
         stream_current()
+
+        # Load the history file
+        if os.path.exists(histf):
+            readline.read_history_file(histf)
+             
         self.prompt = '(packette) ' if event is None else self.prompt_text % (event.event_num, pos)
+
+    def postloop(self):
+        readline.write_history_file(histf)
         
     def precmd(self, line):
         if self.file and 'playback' not in line:
             print(line, file=self.file)
         return line
+
+    def emptyline(self):
+        # Do nothing
+        return
     
     def close(self):
         if self.file:

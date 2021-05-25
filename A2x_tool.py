@@ -57,12 +57,12 @@ human_readable = {
 if args.words:
     ifc.brd.pokenow(lappdIfc.ADCBUFNUMWORDS, int(args.words))
 
-for reg in [lappdIfc.DRSREFCLKRATIO, 0x620, lappdIfc.ADCBUFNUMWORDS]:
-    val = ifc.brd.peeknow(reg)
-    print("#\t%s (%s) = %d" % (human_readable[reg], hex(reg), val))
+#for reg in [lappdIfc.DRSREFCLKRATIO, 0x620, lappdIfc.ADCBUFNUMWORDS]:
+#    val = ifc.brd.peeknow(reg)
+#    print("#\t%s (%s) = %d" % (human_readable[reg], hex(reg), val))
 
 # Make it pretty
-print("#")
+# print("#")
 
 # Turn on the external trigger, if it was requested and its off
 triggerToggled = False

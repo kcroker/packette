@@ -22,7 +22,7 @@ for chan in aPedestal.mean:
         mean12 = (np.int64(mean) & 0xFFFF) >> 4
         var12 = (np.int64(var) & 0xFFFF) >> 4 if not np.isnan(var) else 0
         
-        print("%d %d %d %d %d" % (n, mean, var, chan, count))
+        print("%d %d %d %d %d" % (n, np.int64(mean), np.int64(var), chan, count))
         n += 1
 
     # Break on channel

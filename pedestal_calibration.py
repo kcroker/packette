@@ -38,8 +38,8 @@ def pedestalAccumulator(fname):
 
     # Initialize accounting
     for chan in firstevent.channels.keys():
-        sums[chan] = np.zeros([1024], dtype=np.float)
-        sumsquares[chan] = np.zeros([1024], dtype=np.float)
+        sums[chan] = np.zeros([1024], dtype=np.int64)
+        sumsquares[chan] = np.zeros([1024], dtype=np.int64)
         counts[chan] = np.zeros([1024], dtype=np.int32)
     
     for event in events:

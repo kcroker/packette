@@ -2,6 +2,7 @@
 import numpy as np
 import sys
 import time
+from os import environ
 
 # We're gonna really streamline this
 import multiprocessing
@@ -71,6 +72,8 @@ def pedestalAccumulator(fname):
 #
 if __name__ == '__main__':
 
+    print(sys.argv[1:])
+    
     # Use Pool, slicker.
     with multiprocessing.Pool(4) as p:
          print("pedestal_calibration.py: spawning a worker process per file ...")
@@ -110,3 +113,6 @@ if __name__ == '__main__':
     # Write out a binary timing file
     import pickle
     pickle.dump(pedestal(avgs, stdevs, counts), open("%s.pedestal" % board_id.hex(), 'wb'))
+
+    # Let the whole world know, the pedestals are back in town
+    print("%s.pedestal" % board_id.hex())

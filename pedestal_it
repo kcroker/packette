@@ -1,0 +1,28 @@
+#!/bin/bash
+threads=4
+baseport=23000
+rate=100
+
+# Enable job controlling...
+set -m
+
+echo "Running packette in the background..."
+./packette 10.0.6.254 -q -f "$1" -t $threads -p $baseport -n "$2" &
+pid=$!
+
+echo "packette (parent) running at PID $pid."
+echo "Requesting unmodified waveforms..."
+time ./A2x_tool.py --zsuppress 0 --pedestal 0 -r $rate -t $threads -a $baseport -N "$2" "$3"
+
+echo "Computing the pedestal..."
+pedestal=`./pedestal_calibration.py rawdata/$1*.ordered | tail -n 1`
+
+echo "Telling packette and everything descended from PID $pid to stop listening..."
+kill -2 -$pid
+
+# Describe the pedestal
+./describe_pedestal.py "$pedestal" > pedestal_ascii
+
+# Uploade the pedestal
+time ./pedestal_upload.py "$3" "$pedestal"
+

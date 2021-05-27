@@ -25,7 +25,7 @@ print("Connection to EEVEE @ %s established." % argv[1])
 # We have 1024 pedestals per channel
 # Each register set is a 32bit address and 32bit word
 # 
-maxSetsPerPacket = 128
+maxSetsPerPacket = 1
 
 count = 0
 tmp = {}
@@ -37,7 +37,7 @@ for chan in aPedestal.mean:
 
         # Truncate it
         ped = (int(ped) & 0xFFFF) >> 4
-        
+                
         # This method guarantees that only one 'register write'
         # operation is required to set all these registers
         tmp[addr] = ped if ped >= 0 else ped + 0xFFF + 1

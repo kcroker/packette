@@ -31,12 +31,10 @@ def create(leader):
     parser.add_argument('-I', '--initialize', action="store_true", help="Initialize the board")
     parser.add_argument('-t', '--threads', metavar="NUM_THREADS", type=int, help="Number of distinct ports to receive data.  Ports increment from the aimed port.", default=1)
 
-    parser.add_argument('-e', '--external', action="store_true", help='Toggle hardware triggering.')
-    parser.add_argument('-p', '--pedestal', action="store_true", help='Toggle hardware pedestal subtraction.')
-    parser.add_argument('-z', '--zero-suppress', action="store_true", help='Toggle firmware zero suppression')
-    parser.add_argument('-O', '--oscillator', action="store_true", help='Toggle TCAL input between calibration signal and external analog SMA')
-
-    parser.add_argument('-k', '--kalibrate', action="store_true", help='Enable the internal 100Mhz oscillator on all TCAL lines')
+    parser.add_argument('-e', '--external', type=int, help='Adjust extriggering (odd is on)')
+    parser.add_argument('-p', '--pedestal', type=int, help='Adjust hardware pedestal subtraction (odd is on)')
+    parser.add_argument('-z', '--zsuppress', type=int, help='Adjust firmware zero channel suppression (odd is on)')
+    parser.add_argument('-O', '--oscillator', type=int, help='Adjust internal 100Mhz oscillator on all TCAL lines (odd is on)')
     parser.add_argument('--adcmode', type=str, default='normal', help='Put the ADC into alternate modes for debugging')
     
     # At these values, unbuffered TCAL does not
@@ -55,7 +53,7 @@ def create(leader):
     #parser.add_argument('--oofs', metavar='OOFS', type=float, default=1.3, help='DC offset for DRS4 output into ADC (OOFS)') #?/
 
     # Manual iteration tests seem to show that 1.25 outperforms 1.2 by factors of 2-3x in most places
-    parser.add_argument('--oofs', metavar='OOFS', type=float, default=1.25, help='DC offset for DRS4 output into ADC (OOFS)') #?/
+    parser.add_argument('--oofs', metavar='OOFS', type=float, default=1.15, help='DC offset for DRS4 output into ADC (OOFS)') #?/
     parser.add_argument('--cmofs', metavar='CMOFS', type=float, default=0.8, help='DC offset into DRS4 (DRS4 wants 0.1 - 1.5V) (CMOFS)')
     parser.add_argument('--tcal', metavar='TCAL', type=float, default=0.8, help='DC offset for the calibration lines TCAL_N1 and TCAL_N2')
     parser.add_argument('--bias', metavar='BIAS', type=float, default=0.7, help='DRS4 BIAS voltage (DRS4 internally sets 0.7V usually)')
@@ -133,24 +131,17 @@ def connect(parser):
         ifc.brd.pokenow(lappdIfc.DRSWAITSTART, args.wait)
         print("Setting STOP delay to: %d" % args.wait, file=sys.stderr)
 
-    # Enable the external trigger if it was requested
-    mysteryReg = ifc.brd.peeknow(0x370)
-    if args.external:
-        ifc.brd.pokenow(0x370, mysteryReg | (1 << 5))
-    else:
-        ifc.brd.pokenow(0x370, mysteryReg & ~(0x0000000000000001 << 5))
+    if not args.external is None:
+        ifc.RegSetBit(lappdIfc.MODE, lappdIfc.C_MODE_EXTTRG_EN_BIT, args.external & 1)
 
-    # Enable pedestal subtraction if it was requested
-    if args.pedestal:
-        ifc.brd.pokenow(0x370, mysteryReg | (1 << lappdIfc.C_MODE_PEDSUB_EN_BIT))
-    else:
-        ifc.brd.pokenow(0x370, mysteryReg & ~(0x0000000000000001 << lappdIfc.C_MODE_PEDSUB_EN_BIT))
+    if not args.pedestal is None:
+        ifc.RegSetBit(lappdIfc.MODE, lappdIfc.C_MODE_PEDSUB_EN_BIT, args.pedestal & 1)
+        
+    if not args.oscillator is None:
+        ifc.RegSetBit(lappdIfc.MODE, lappdIfc.C_MODE_TCA_ENA_BIT, args.oscillator & 1)
 
-    # Enable TCAL oscillations
-    if args.kalibrate:
-        ifc.DrsTimeCalibOscOn()
-    else:
-        ifc.DrsTimeCalibOscOff()
+    if not args.zsuppress is None:
+        ifc.RegSetBit(lappdIfc.MODE, lappdIfc.C_MODE_ZERSUP_EN_BIT, args.zsuppress & 1)
         
     # Return a tuble with the interface and the arguments
     return (ifc, args)

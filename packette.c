@@ -432,6 +432,7 @@ int main(int argc, char **argv) {
   char *addr_str;
   unsigned int count;
   unsigned char packet_processor;
+  unsigned char quiet;
   
   // Signal handling stuff
   struct sigaction new_action, old_action;
@@ -464,6 +465,7 @@ int main(int argc, char **argv) {
   ordered_file = 0x0;
   count = 0;
   packet_processor = 0;
+  quiet = 0;
   
   // Things for event counting
   prev_event_num = 0;
@@ -471,7 +473,7 @@ int main(int argc, char **argv) {
   
   /////////////////// ARGUMENT PARSING //////////////////
   
-  while ((opt = getopt(argc, argv, "t:p:f:on:d:")) != -1) {
+  while ((opt = getopt(argc, argv, "t:p:f:oqn:d:")) != -1) {
     switch (opt) {
     case 't':
       children = atoi(optarg);
@@ -485,6 +487,9 @@ int main(int argc, char **argv) {
     case 'o':
       ordered_file = stdout;
       break;
+    case 'q':
+      quiet = 1;
+      break;
     case 'd':
       packet_processor = atoi(optarg);
       if(packet_processor >= num_processor_ptrs) {
@@ -497,7 +502,7 @@ int main(int argc, char **argv) {
       count = atoi(optarg) + 1;
       break;
     default: /* '?' */
-      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-f output file prefix] [-o dump to standard out] [-n event count] [-d debug select] BIND_ADDRESS\n",
+      fprintf(stderr, "Usage: %s [-t threads] [-p base UDP port] [-f output file prefix] [-o dump to standard out] [-n event count] [-d debug select] [-q quiet] BIND_ADDRESS\n",
 	      argv[0]);
       exit(EXIT_FAILURE);
     }
@@ -640,6 +645,10 @@ int main(int argc, char **argv) {
     if (old_action.sa_handler != SIG_IGN)
       sigaction(SIGINT, &new_action, NULL);
 
+    sigaction(SIGTERM, NULL, &old_action);
+    if (old_action.sa_handler != SIG_IGN)
+      sigaction(SIGTERM, &new_action, NULL);
+    
     ///////////////// INITIALIZATION ///////////////
     
     // Seed the random number generator with ... a better random number
@@ -805,7 +814,7 @@ int main(int argc, char **argv) {
 	    
 	    // Someone pressed Ctrl+C
 	    fprintf(stderr,
-		    "packette (PID %d): Received SIGINT, finishing up...\n",
+		    "packette (PID %d): Received SIGINT or SIGTERM, finishing up...\n",
 		    pid);
 	    break;
 	  }
@@ -840,6 +849,11 @@ int main(int argc, char **argv) {
     if (old_action.sa_handler != SIG_IGN)
       sigaction(SIGINT, &new_action, NULL);
 
+    // Capture SIGTERM too (if we're the parent)
+    sigaction(SIGTERM, NULL, &old_action);
+    if (old_action.sa_handler != SIG_IGN)
+      sigaction(SIGTERM, &new_action, NULL);
+
     // Allocate and initialize some local accounting for da kids
     if(!(previous_processed = (unsigned long *)malloc(sizeof(unsigned long)*children*2))) {
       perror("malloc()");
@@ -851,7 +865,7 @@ int main(int argc, char **argv) {
 
     //////////////////////////// PERFORMANCE REPORTING /////////////////////
 
-    if(ordered_file != stdout) {
+    if(ordered_file != stdout && !quiet) {
 	 
       // Enter ncurses mode
       initscr();
@@ -881,7 +895,7 @@ int main(int argc, char **argv) {
       // Check for Ctrl+C
       if(interrupt_flag) {
 	fprintf(stderr,
-	    "packette (parent): Received SIGINT, waiting for children to finish...\n");
+	    "packette (parent): Received SIGINT or SIGTERM, waiting for children to finish...\n");
 	break;
       }
 

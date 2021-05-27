@@ -122,7 +122,7 @@ class packetteChannel(object):
 
     def __mul__(self, x):
         # Multiply the cachedViews.  Allows to vectorize the channels
-        if isinstance(x, packetteRun.packetteEvent.packetteChannel):
+        if isinstance(x, packetteChannel):
             return self.cachedView * x.cachedView
         else:
             return self.cachedView * x
@@ -371,7 +371,10 @@ class packetteRun(object):
                 else:
                     # We are the parent
                     print("Successfully forked data capture PID %d, writing to %s..." % (pid, fnames[0]), file=sys.stderr)
-                    
+            else:
+                # Wrap it in a list
+                fnames = [fnames]
+                
         # Now the previous machinery should work, just on the backing file
         self.fnames = fnames
         self.fps = {}

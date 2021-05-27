@@ -135,7 +135,7 @@ def graph(args):
             ax.axhline(y=8, dashes=(1,1,1,1), color='black', label='Masked')
             plt.axhspan(0, 8, alpha=0.2, facecolor='cyan', label='Flagged')
             
-            lgd = ax.legend() #bbox_to_anchor=(1.04,1), loc="upper left")
+            lgd = ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
             # plt.tight_layout()
             # ax.add_artist(lgd)
             plt.show(block=False)
@@ -180,7 +180,7 @@ def graph(args):
                     alreadyLabeled = True
                     
                 ax.set_title("Event %d, Channel %d" % (event.event_num, var))
-                ax.legend()
+                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 plt.show(block=False)
             else:
                 print("Channel not present in this event")
@@ -201,7 +201,36 @@ def jump(args):
         print("Could not understand your jump request")
 
     stream_current()
+
+def export(arg):
+    global event
+
+    # Use colon to separate da kine
+    try:
+        chan,fname = arg.split(':')
+    except ValueError as e:
+        print("SYNTAX export <channel number>:<filename>")
+        return
     
+    try:
+        chan = int(chan)
+        if chan < 0 or chan > 63:
+            raise ValueError()
+        
+    except ValueError as e:
+        print("Could not interpret %d as a channel" % chan)
+        return
+    
+    try:
+        with open(fname, "wt") as f:
+            for n,x in enumerate(event.channels[chan].cachedView):
+                print(n, x, file=f)
+
+        print("Exported channel %d to %s" % (chan, fname))
+        
+    except KeyError as e:
+        print("Channel %d does not exist in this event" % chan)
+        
 def refresh():
     global run
     events.updateIndex()
@@ -259,6 +288,9 @@ class PacketteShell(cmd.Cmd):
     def do_refresh(self, arg):
         'Rebuild stream index and jump to most recent event: refresh'
         refresh()
+    def do_export(self, arg):
+        'Export the cached view of a channel in ascii to a file.  e.g. export 5:destination.dat'
+        export(arg)
     def do_quit(self, arg):
         'Quit'
         self.close()

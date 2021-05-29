@@ -287,7 +287,7 @@ class packetteEvent(object):
         chans = list(self.channels.keys())
         drsstr = ''
         for drs in range(8):
-            drsstr += "\tDRS%d: [" % drs
+            drsstr += "\tDRS%d: [" % (drs+1)
             for chan in range(8):
                 if drs*8+chan in chans:
                     drsstr += '%3d' % (drs*8+chan)

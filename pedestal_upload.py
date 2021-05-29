@@ -25,7 +25,7 @@ print("Connection to EEVEE @ %s established." % argv[1])
 # We have 1024 pedestals per channel
 # Each register set is a 32bit address and 32bit word
 # 
-maxSetsPerPacket = 64
+maxSetsPerPacket = 1
 
 count = 0
 tmp = {}

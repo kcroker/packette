@@ -111,6 +111,8 @@ def graph(args):
     
     # OOO This is ugly code, merge it to a list containing a single line, and just
     # graph once
+
+    chanstograph = None
     
     try:
         low,high = args.split('-')
@@ -122,24 +124,38 @@ def graph(args):
         
         if low < high and low >= 0 and high < 64:
             plt.title("Event %d, Channels %d-%d" % (event.event_num, low, high))
-            for n in range(low,high+1):
-                try:
-                    chan = event.channels[n]
-                    plt.plot(range(0,1024), chan[0:1024], label='Channel %d' % n)
-                except:
-                    pass
+            chanstograph = range(low,high+1)
+    except ValueError as e:
+        pass
 
-            # The dumbest coordinate system
+    try:
+        chanstograph = [int(x) for x in args.split(',')]
+
+        print("Request to plot many individual channels ", chanstograph)
+        
+    except ValueError as e:
+        pass
+
+    if not chanstograph is None:
+        
+        for n in chanstograph:
+            try:
+                chan = event.channels[n]
+                plt.plot(range(0,1024), chan[0:1024], label='Channel %d' % n)
+            except:
+                pass
+
+        # The dumbest coordinate system
             
-            ax.axhline(y=4, dashes=(2,2,2,2), color='black', label='No data')
-            ax.axhline(y=8, dashes=(1,1,1,1), color='black', label='Masked')
-            plt.axhspan(0, 8, alpha=0.2, facecolor='cyan', label='Flagged')
+        ax.axhline(y=4, dashes=(2,2,2,2), color='black', label='No data')
+        ax.axhline(y=8, dashes=(1,1,1,1), color='black', label='Masked')
+        plt.axhspan(0, 8, alpha=0.2, facecolor='cyan', label='Flagged')
             
-            lgd = ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
-            # plt.tight_layout()
-            # ax.add_artist(lgd)
-            plt.show(block=False)
-    except:
+        lgd = ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
+        # plt.tight_layout()
+        # ax.add_artist(lgd)
+        plt.show(block=False)
+    else:
         try:
             # For singles, show individual masks, overflows, and underflows
             

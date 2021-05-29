@@ -12,7 +12,7 @@ pid=$!
 
 echo "packette (parent) running at PID $pid."
 echo "Requesting unmodified waveforms..."
-time ./A2x_tool.py --zsuppress 0 --pedestal 0 -r $rate -t $threads -a $baseport -N "$2" "$3"
+time ./A2x_tool.py -I -c 0xffffffffffffffff --zsuppress 0 --pedestal 0 -r $rate -t $threads -a $baseport -N "$2" "$3"
 
 echo "Computing the pedestal..."
 pedestal=`./pedestal_calibration.py rawdata/$1*.ordered | tail -n 1`

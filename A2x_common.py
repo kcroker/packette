@@ -25,7 +25,8 @@ def create(leader):
     parser.add_argument('-a', '--aim', metavar='UDP_PORT', type=int, default=1338, help='Aim the board at this port on this machine.')
     parser.add_argument('-c', '--channels', metavar='CHANNELS', help="Explicitly force a hex channel mask. (Persistent)")
     parser.add_argument('-w', '--wait', metavar='WAIT', type=int, help="Adjust delay between receipt of soft/hard trigger and DRS4 sampling stop. (Persistant)")
-
+    parser.add_argument('-u', '--udpsport', metavar='UDPSPORT', type=int, help="Set the originating port for outgoing control signals explicitly")
+    
     parser.add_argument('-N', metavar='NUM_SAMPLES', type=int, default=0, help='Issue N soft triggers of the board')
     parser.add_argument('-r', metavar='RATE', type=float, default=100, help='The rate (in Hz) of software triggers')
     parser.add_argument('-I', '--initialize', action="store_true", help="Initialize the board")
@@ -35,7 +36,7 @@ def create(leader):
     parser.add_argument('-p', '--pedestal', type=int, help='Adjust hardware pedestal subtraction (odd is on)')
     parser.add_argument('-z', '--zsuppress', type=int, help='Adjust firmware zero channel suppression (odd is on)')
     parser.add_argument('-O', '--oscillator', type=int, help='Adjust internal 100Mhz oscillator on all TCAL lines (odd is on)')
-    parser.add_argument('--adcmode', type=str, default='normal', help='Put the ADC into alternate modes for debugging')
+    parser.add_argument('--adcmode', type=str, help='Put the ADC into alternate modes for debugging')
     
     # At these values, unbuffered TCAL does not
     # have the periodic pulse artifact (@ CMOFS 0.8)
@@ -84,7 +85,7 @@ def connect(parser):
     args = parser.parse_args()
 
     # Connect to the board
-    ifc = lappdIfc.lappdInterface(args.board)
+    ifc = lappdIfc.lappdInterface(args.board, udpsport=args.udpsport)
 
     # Initialize the board, if requested
     if args.initialize:
@@ -97,9 +98,11 @@ def connect(parser):
     ifc.brd.aimNBIC(port=args.aim)
     args.listen = ifc.brd.s.getsockname()[0]
 
-    # Remember to set both ADCs
-    ifc.AdcSetTestMode(0, args.adcmode)
-    ifc.AdcSetTestMode(1, args.adcmode)
+    # Set both adc's if requested
+    # XXX? Is this wrong to do at this point?
+    if not args.adcmode is None:
+        ifc.AdcSetTestMode(0, args.adcmode)
+        ifc.AdcSetTestMode(1, args.adcmode)
 
     # DAC Channel mappings (in A21 crosshacked)
     # (these should be moved to lappdIfc.py)
@@ -110,24 +113,24 @@ def connect(parser):
     DAC_TCAL_N1 = 4
     DAC_TCAL_N2 = 5
 
-    # Set DAC voltages
-    for num in (0,1):
-        ifc.DacSetVout(num, DAC_OOFS, args.oofs)
-        ifc.DacSetVout(num, DAC_CMOFS, args.cmofs)
-        ifc.DacSetVout(num, DAC_ROFS, args.rofs)
-        ifc.DacSetVout(num, DAC_BIAS, args.bias)
-        ifc.DacSetVout(num, DAC_TCAL_N1, args.tcal)
-        ifc.DacSetVout(num, DAC_TCAL_N2, args.tcal)
+    # # Set DAC voltages
+    # for num in (0,1):
+    #     ifc.DacSetVout(num, DAC_OOFS, args.oofs)
+    #     ifc.DacSetVout(num, DAC_CMOFS, args.cmofs)
+    #     ifc.DacSetVout(num, DAC_ROFS, args.rofs)
+    #     ifc.DacSetVout(num, DAC_BIAS, args.bias)
+    #     ifc.DacSetVout(num, DAC_TCAL_N1, args.tcal)
+    #     ifc.DacSetVout(num, DAC_TCAL_N2, args.tcal)
 
     # Set the channels?
-    if args.channels:
+    if not args.channels is None:
         args.channels = int(args.channels, base=16)
 
         ifc.brd.pokenow(0x670, args.channels & 0x00000000FFFFFFFF)
         ifc.brd.pokenow(0x674, (args.channels & 0xFFFFFFFF00000000) >> 32)
 
     # Set the wait?
-    if args.wait:
+    if not args.wait is None:
         ifc.brd.pokenow(lappdIfc.DRSWAITSTART, args.wait)
         print("Setting STOP delay to: %d" % args.wait, file=sys.stderr)
 

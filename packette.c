@@ -292,7 +292,7 @@ unsigned long order_processor(void *buf,
       }
 
       // If we ended up here, it was a duplicate ==> drop it.
-      fprintf(stderr, "DUP!");
+      fprintf(stderr, "Duplicate sequence number %d...", ptr->assembly.seqnum);
     }
 
     // Advance to the next packet

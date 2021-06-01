@@ -93,6 +93,111 @@ def switch_channel(args):
     else:
         print("Channel %d not present in this event" % var)
 
+def parse_speclist(speclist):
+
+    # Speclist looks like
+    # [!]n1, [!]n2-n3, ...
+
+    # Get the individual specs
+    specs = [x.strip() for x in speclist.split(',')]
+
+    exclusions = []
+    inclusions = []
+    
+    for spec in specs:
+
+        # See if they are negated
+        negated = False
+        if spec[0] == '!':
+            negated = True
+            spec = spec[1:]
+        
+        # See if its a range
+        bounds = [None, None]
+        
+        try:
+            # Extract the bounds
+            bounds = [int(x) for x in spec.split('-')]
+
+            # Flip the if reversed
+            if bounds[0] > bounds[1]:
+                tmp = bounds[1]
+                bounds[1] = bounds[0]
+                bounds[0] = tmp
+        except ValueError as e:
+
+            # See if its just a number
+            try:
+                bounds[0] = bounds[1] = int(spec)
+            except ValueError as e:
+                print("Did not understand %s, skipping..." % spec)
+
+        # Add it to the appropriate list
+        if negated:
+            exclusions += range(bounds[0], bounds[1])
+        else:
+            inclusions += range(bounds[0], bounds[1])
+
+    # Filter out the exclusions from the inclusions
+    return [x for x in inclusions if x not in exclusions]
+                                
+def parse_graph_string(arg):
+    
+    # Interpret as semi-colon separated individual directives
+    directives = [x.strip() for x in arg.split(';')]
+
+    # Each directive looks like
+    #  [<event spec>:]<channel spec>
+
+    for directive in directives:
+
+        # So, first see if there is an event specifier
+        eventspec = None
+    
+        try:
+            eventspec, chanspec = [x.strip() for x in directive.split(':')]
+        except ValueError as e:
+            chanspec = directive
+
+        # Get the channels
+        chans = parse_speclist(chanspec)
+
+        if eventspec is None:
+            # Just graph channels
+
+            try:
+                chan = event.channels[n]
+                plt.plot(range(0,1024), chan[0:1024], label='Channel %d' % n)
+            except:
+                pass
+
+            # The dumbest coordinate system
+            
+            ax.axhline(y=4, dashes=(2,2,2,2), color='black', label='No data')
+            ax.axhline(y=8, dashes=(1,1,1,1), color='black', label='Masked')
+            plt.axhspan(0, 8, alpha=0.2, facecolor='cyan', label='Flagged')
+        
+            lgd = ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
+            # plt.tight_layout()
+            # ax.add_artist(lgd)
+            plt.show(block=False)
+
+        else:
+            events = parse_speclist(eventspec)
+
+            print("Across events not yet implemented")
+            
+            
+            
+            
+            
+    #  a) a channel: 56
+    #  b) a channel range: 34-45
+    #  c)
+
+def graph2(args):
+    pass
+    
 def graph(args):
     global event, pos, i
     
@@ -340,13 +445,14 @@ class PacketteShell(cmd.Cmd):
         return stop
 
     def preloop(self):
+        global run 
         stream_current()
 
         # Load the history file
         if os.path.exists(histf):
             readline.read_history_file(histf)
              
-        self.prompt = '(packette) ' if event is None else self.prompt_text % (event.event_num, pos)
+        self.prompt = '(packette) ' if event is None else self.prompt_text % (event.event_num, pos, len(run))
 
     def postloop(self):
         readline.write_history_file(histf)

@@ -32,11 +32,15 @@ tmp = {}
 for chan in aPedestal.mean:
     for i, ped in enumerate(aPedestal.mean[chan]):
 
+        # Truncate it
+        try:
+            ped = (int(ped) & 0xFFFF) >> 4
+        except ValueError:
+            print("WARNING bad pedestal, channel %d capacitor %d" % (chan, i))
+            continue
+        
         # Multiplication by 4 because 32bits per address
         addr = ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
-
-        # Truncate it
-        ped = (int(ped) & 0xFFFF) >> 4
                 
         # This method guarantees that only one 'register write'
         # operation is required to set all these registers

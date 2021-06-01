@@ -22,7 +22,7 @@ def create(leader):
     parser.add_argument('board', metavar='IP_ADDRESS', type=str, help='IP address of the target board')
 
     parser.add_argument('-s', '--subtract', metavar='PEDESTAL_FILE', type=str, help='Upload a pedestal for firmware subtraction')
-    parser.add_argument('-a', '--aim', metavar='UDP_PORT', type=int, default=1338, help='Aim the board at this port on this machine.')
+    parser.add_argument('-a', '--aim', metavar='UDP_PORT', type=int, help='Aim the board at this port on this machine.')
     parser.add_argument('-c', '--channels', metavar='CHANNELS', help="Explicitly force a hex channel mask. (Persistent)")
     parser.add_argument('-w', '--wait', metavar='WAIT', type=int, help="Adjust delay between receipt of soft/hard trigger and DRS4 sampling stop. (Persistant)")
     parser.add_argument('-u', '--udpsport', metavar='UDPSPORT', type=int, help="Set the originating port for outgoing control signals explicitly")
@@ -53,12 +53,16 @@ def create(leader):
     # This is getting outputs, but maybe fucking the ADCs hard...
     #parser.add_argument('--oofs', metavar='OOFS', type=float, default=1.3, help='DC offset for DRS4 output into ADC (OOFS)') #?/
 
+    # KC 5/29/21
+    # PRevious defauilts
+    # 1.15, 0.8, 0.8, 0.7, 1.55
+    
     # Manual iteration tests seem to show that 1.25 outperforms 1.2 by factors of 2-3x in most places
-    parser.add_argument('--oofs', metavar='OOFS', type=float, default=1.15, help='DC offset for DRS4 output into ADC (OOFS)') #?/
-    parser.add_argument('--cmofs', metavar='CMOFS', type=float, default=0.8, help='DC offset into DRS4 (DRS4 wants 0.1 - 1.5V) (CMOFS)')
-    parser.add_argument('--tcal', metavar='TCAL', type=float, default=0.8, help='DC offset for the calibration lines TCAL_N1 and TCAL_N2')
-    parser.add_argument('--bias', metavar='BIAS', type=float, default=0.7, help='DRS4 BIAS voltage (DRS4 internally sets 0.7V usually)')
-    parser.add_argument('--rofs', metavar='ROFS', type=float, default=1.55, help='DRS4 read offset voltage (1.05V will capture signals with differential between 0 and 1V well)')
+    parser.add_argument('--oofs', metavar='OOFS', type=float, help='DC offset for DRS4 output into ADC (OOFS)') #?/
+    parser.add_argument('--cmofs', metavar='CMOFS', type=float, help='DC offset into DRS4 (DRS4 wants 0.1 - 1.5V) (CMOFS)')
+    parser.add_argument('--tcal', metavar='TCAL', type=float, help='DC offset for the calibration lines TCAL_N1 and TCAL_N2')
+    parser.add_argument('--bias', metavar='BIAS', type=float, help='DRS4 BIAS voltage (DRS4 internally sets 0.7V usually)')
+    parser.add_argument('--rofs', metavar='ROFS', type=float, help='DRS4 read offset voltage (1.05V will capture signals with differential between 0 and 1V well)')
 
     # parser.add_argument('--oofs', metavar='OOFS', type=float, default=0.8, help='DC offset for DRS4 output into ADC (OOFS)') #?/
     # parser.add_argument('--cmofs', metavar='CMOFS', type=float, default=0.7, help='DC offset into DRS4 (DRS4 wants 0.1 - 1.5V) (CMOFS)')
@@ -95,7 +99,9 @@ def connect(parser):
     ifc.brd.pokenow(lappdIfc.NUDPPORTS, args.threads)
 
     # Give the socket address for use by spawn()
-    ifc.brd.aimNBIC(port=args.aim)
+    if args.aim is not None:
+        ifc.brd.aimNBIC(port=args.aim)
+    
     args.listen = ifc.brd.s.getsockname()[0]
 
     # Set both adc's if requested
@@ -113,15 +119,20 @@ def connect(parser):
     DAC_TCAL_N1 = 4
     DAC_TCAL_N2 = 5
 
-    # # Set DAC voltages
-    # for num in (0,1):
-    #     ifc.DacSetVout(num, DAC_OOFS, args.oofs)
-    #     ifc.DacSetVout(num, DAC_CMOFS, args.cmofs)
-    #     ifc.DacSetVout(num, DAC_ROFS, args.rofs)
-    #     ifc.DacSetVout(num, DAC_BIAS, args.bias)
-    #     ifc.DacSetVout(num, DAC_TCAL_N1, args.tcal)
-    #     ifc.DacSetVout(num, DAC_TCAL_N2, args.tcal)
+    derps = [(DAC_BIAS, 'bias'),
+             (DAC_ROFS, 'rofs'),
+             (DAC_OOFS, 'oofs'),
+             (DAC_CMOFS, 'cmofs'),
+             (DAC_TCAL_N1, 'tcal'),
+             (DAC_TCAL_N2, 'tcal')]
 
+    for dacout, derp in derps:
+        eval_derp = eval('args.%s' % derp)
+        if not eval_derp is None:
+            print("Setting %s to %f..." % (derp, eval_derp))
+            for num in (0,1):
+                ifc.DacSetVout(num, dacout, eval_derp)
+                
     # Set the channels?
     if not args.channels is None:
         args.channels = int(args.channels, base=16)

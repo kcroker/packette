@@ -1,5 +1,5 @@
 #!/bin/bash
-threads=4
+threads=1
 baseport=23000
 rate=100
 
@@ -13,6 +13,9 @@ pid=$!
 echo "packette (parent) running at PID $pid."
 echo "Requesting unmodified waveforms..."
 time ./A2x_tool.py -I -c 0xffffffffffffffff --zsuppress 0 --pedestal 0 -r $rate -t $threads -a $baseport -N "$2" "$3"
+
+echo "Sleeping..."
+sleep 1
 
 echo "Computing the pedestal..."
 pedestal=`./pedestal_calibration.py rawdata/$1*.ordered | tail -n 1`

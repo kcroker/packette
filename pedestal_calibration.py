@@ -108,8 +108,7 @@ if __name__ == '__main__':
         avgs[chan] = np.floor(sums[chan]/counts[chan])
 
         # Also try here
-        stdevs[chan] = np.sqrt(sumsquares[chan]/counts[chan] - avgs[chan]**2)
-
+        stdevs[chan] = np.sqrt(sumsquares[chan]/counts[chan] - avgs[chan]**2)            
     # Write out a binary timing file
     import pickle
     pickle.dump(pedestal(avgs, stdevs, counts), open("%s.pedestal" % board_id.hex(), 'wb'))

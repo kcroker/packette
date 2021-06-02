@@ -12,12 +12,12 @@ from lappdIfc import ADDR_PEDMEM_OFFSET
 import eevee
 
 # 1) Load the pedestal
-aPedestal = pickle.load(open(argv[2], "rb"))
-print("Pedestal file %s loaded." % argv[2])
+aPedestal = pickle.load(open(argv[1], "rb"))
+print("Pedestal file %s loaded." % argv[1])
 
 # 1.5) Connect to the board
-board = eevee.board(argv[1])
-print("Connection to EEVEE @ %s established." % argv[1])
+board = eevee.board(argv[2])
+print("Connection to EEVEE @ %s established." % argv[2])
 
 # 2) Iterate through
 #

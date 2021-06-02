@@ -15,9 +15,14 @@ parser.add_argument('fnames', type=str, nargs='+', help='Files to load or IP add
 
 args = parser.parse_args()
 
+targetport = None
+capture = args.capture
+target = None
+
 if args.capture:
     try:
         args.fnames = (args.fnames[0], int(args.fnames[1]))
+        targetport = args.fnames[1]
     except ValueError as e:
         print("ERROR: Could not interpret %s as a port" % args.fnames[1])
         exit(1)
@@ -74,10 +79,26 @@ def stream_current():
         print(event)
     except:
         print("No events yet in stream...")
-    
+
+
+#
+# Capture arrow keys and shift arrow keys?
+#   Left, Right: translate last written interval or single to the Left/Right in channel space
+#   Shift+L/R: symmetrically dilate/contract last written interval about its center in channel space
+#   Up, Down: translate last written interval or single to the Up/Down in event space
+#   Shift+Up/Down: symmetrically dilate/contract last written interval about its center in event space
+#   q: return to the command line
+#
+# Not sure how to do this with GNU Readline....
+
 def toggle_view():
     events.setSCAView(not events.SCAView)
 
+    if events.SCAView:
+        print("Cached views are now capacitor-ordered")
+    else:
+        print("Cached views are now time-orderd")
+        
 def switch_channel(args):
     global event, pos, i
     
@@ -98,6 +119,9 @@ def parse_speclist(speclist):
     # Speclist looks like
     # [!]n1, [!]n2-n3, ...
 
+    # Received
+    print("Received: ", speclist)
+    
     # Get the individual specs
     specs = [x.strip() for x in speclist.split(',')]
 
@@ -111,38 +135,50 @@ def parse_speclist(speclist):
         if spec[0] == '!':
             negated = True
             spec = spec[1:]
-        
-        # See if its a range
-        bounds = [None, None]
-        
+            
         try:
             # Extract the bounds
             bounds = [int(x) for x in spec.split('-')]
 
+            # Double up if necessary
+            if len(bounds) < 2:
+                bounds.append(bounds[0])
+                
             # Flip the if reversed
             if bounds[0] > bounds[1]:
                 tmp = bounds[1]
                 bounds[1] = bounds[0]
                 bounds[0] = tmp
         except ValueError as e:
-
-            # See if its just a number
-            try:
-                bounds[0] = bounds[1] = int(spec)
-            except ValueError as e:
-                print("Did not understand %s, skipping..." % spec)
+            print("Did not understand %s, skipping..." % spec)
 
         # Add it to the appropriate list
+        # Interpret bounds as inclusive
         if negated:
-            exclusions += range(bounds[0], bounds[1])
+            exclusions += range(bounds[0], bounds[1]+1)
         else:
-            inclusions += range(bounds[0], bounds[1])
+            inclusions += range(bounds[0], bounds[1]+1)
 
+    print("Include: ", inclusions)
+    print("Exclude: ", exclusions)
+    
     # Filter out the exclusions from the inclusions
     return [x for x in inclusions if x not in exclusions]
                                 
-def parse_graph_string(arg):
+def graph(arg):
+
+    global run,i
     
+    # Set up the graph
+    plt.cla()
+    ax = plt.gca()
+    
+    ax.set_xlabel('Capacitor')
+    ax.set_ylabel('ADC value')
+    ax.grid(True)
+    ax.set_xlim(-5,1030)
+
+
     # Interpret as semi-colon separated individual directives
     directives = [x.strip() for x in arg.split(';')]
 
@@ -151,163 +187,160 @@ def parse_graph_string(arg):
 
     for directive in directives:
 
-        # So, first see if there is an event specifier
-        eventspec = None
-    
+        # Start off assuming the current event
+        eventspec = [i]
+        chanlist = []
+        
+        # See if there's a specific list of requested events
         try:
-            eventspec, chanspec = [x.strip() for x in directive.split(':')]
-        except ValueError as e:
-            chanspec = directive
-
-        # Get the channels
-        chans = parse_speclist(chanspec)
-
-        if eventspec is None:
-            # Just graph channels
-
-            try:
-                chan = event.channels[n]
-                plt.plot(range(0,1024), chan[0:1024], label='Channel %d' % n)
-            except:
-                pass
-
-            # The dumbest coordinate system
-            
-            ax.axhline(y=4, dashes=(2,2,2,2), color='black', label='No data')
-            ax.axhline(y=8, dashes=(1,1,1,1), color='black', label='Masked')
-            plt.axhspan(0, 8, alpha=0.2, facecolor='cyan', label='Flagged')
-        
-            lgd = ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
-            # plt.tight_layout()
-            # ax.add_artist(lgd)
-            plt.show(block=False)
-
-        else:
-            events = parse_speclist(eventspec)
-
-            print("Across events not yet implemented")
-            
-            
-            
-            
-            
-    #  a) a channel: 56
-    #  b) a channel range: 34-45
-    #  c)
-
-def graph2(args):
-    pass
-    
-def graph(args):
-    global event, pos, i
-    
-    if event is None:
-        print("No current event!")
-        return
-
-    plt.cla()
-    ax = plt.gca()
-    
-    ax.set_xlabel('Capacitor')
-    ax.set_ylabel('ADC value')
-    ax.grid(True)
-    ax.set_xlim(0,1025)
-    #ax.axvline(x=1024, dashes=(2,2,2,2), color='black')
-    
-    # OOO This is ugly code, merge it to a list containing a single line, and just
-    # graph once
-
-    chanstograph = None
-    
-    try:
-        low,high = args.split('-')
-    
-        low = int(low)
-        high = int(high)
-
-        print("Request to plot channels %d to %d, inclusive" % (low, high))
-        
-        if low < high and low >= 0 and high < 64:
-            plt.title("Event %d, Channels %d-%d" % (event.event_num, low, high))
-            chanstograph = range(low,high+1)
-    except ValueError as e:
-        pass
-
-    try:
-        chanstograph = [int(x) for x in args.split(',')]
-
-        print("Request to plot many individual channels ", chanstograph)
-        
-    except ValueError as e:
-        pass
-
-    if not chanstograph is None:
-        
-        for n in chanstograph:
-            try:
-                chan = event.channels[n]
-                plt.plot(range(0,1024), chan[0:1024], label='Channel %d' % n)
-            except:
-                pass
-
-        # The dumbest coordinate system
-            
-        ax.axhline(y=4, dashes=(2,2,2,2), color='black', label='No data')
-        ax.axhline(y=8, dashes=(1,1,1,1), color='black', label='Masked')
-        plt.axhspan(0, 8, alpha=0.2, facecolor='cyan', label='Flagged')
-            
-        lgd = ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
-        # plt.tight_layout()
-        # ax.add_artist(lgd)
-        plt.show(block=False)
-    else:
-        try:
-            # For singles, show individual masks, overflows, and underflows
-            
-            var = int(args)
-            if var in event.channels:
-                chan = event.channels[var]
-
-                # Python cannot do signed bitwise math correctly unless width is
-                # coming into play?
-
-                # Get it in numpy so bitwise works
-                x = np.arange(1024, dtype=np.int16)
-                y = chan[0:1024]
-
-                # Test your cleverness with the masking
-                # ~ with signed is going to give you a bad day.
-                flags = (y & 0xF)
-                valid = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
-                ou = (((flags & 0x2) >> 1) | (flags & 0x1))
-                
-                xvalid = x[valid > 0]
-                yvalid = y[valid > 0]
-                validsegs = np.column_stack((xvalid, yvalid))
-                                
-                xou = x[ou > 0]
-                you = y[ou > 0]
-                ousegs = np.column_stack((xou, you))
-                                  
-                ax.set_ylim(int(np.min(yvalid)), int(np.max(yvalid)))
-
-                # Add some line collections
-                ax.add_collection(LineCollection([validsegs]))
-                ax.add_collection(LineCollection([ousegs]))
-
-                alreadyLabeled = False
-                for mlow,mhigh in chan.masks:
-                    plt.axvspan(mlow, mhigh, alpha=0.3, facecolor='gray', label='Masked' if not alreadyLabeled else '')
-                    alreadyLabeled = True
-                    
-                ax.set_title("Event %d, Channel %d" % (event.event_num, var))
-                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-                plt.show(block=False)
+            specs = [x.strip() for x in directive.split(':')]
+            if len(specs) > 1:
+                eventspec = parse_speclist(specs[0])
+                chanlist = parse_speclist(specs[1])
             else:
-                print("Channel not present in this event")
-        except Exception as e:
-            print(e)
-            print("Could not understand your channel specification")
+                chanlist = parse_speclist(specs[0])
+                
+        except ValueError as e:
+            print("Could not understand ", directive)
+            continue
+        
+        # Iterate over events
+        for eventpos in eventspec:
+            for n in chanlist:
+                try:
+                    chan = events[eventpos].channels[n]
+                    plt.plot(range(0,1024), chan[0:1024], label='Event %d, Channel %d' % (eventpos, n))
+                except (KeyError, StopIteration) as e:
+                    print("Missing Event %d, Channel %d?" % (eventpos,n))
+
+    # # Derp
+    # # The dumbest coordinate system
+    # ax.axhline(y=4, dashes=(2,2,2,2), color='black', label='No data')
+    # ax.axhline(y=8, dashes=(1,1,1,1), color='black', label='Masked')
+    # plt.axhspan(0, 8, alpha=0.2, facecolor='cyan', label='Flagged')
+
+    lgd = ax.legend() #bbox_to_anchor=(1.04,1), loc="upper left")
+    
+    # ax.add_artist(lgd)
+
+    # Show the graph
+    plt.show(block=False)
+                   
+            
+#     #  a) a channel: 56
+#     #  b) a channel range: 34-45
+#     #  c)
+
+# def graph(args):
+#     global event, pos, i
+    
+#     if event is None:
+#         print("No current event!")
+#         return
+
+#     plt.cla()
+#     ax = plt.gca()
+    
+#     ax.set_xlabel('Capacitor')
+#     ax.set_ylabel('ADC value')
+#     ax.grid(True)
+#     ax.set_xlim(0,1025)
+#     #ax.axvline(x=1024, dashes=(2,2,2,2), color='black')
+    
+#     # OOO This is ugly code, merge it to a list containing a single line, and just
+#     # graph once
+
+#     chanstograph = None
+    
+#     try:
+#         low,high = args.split('-')
+    
+#         low = int(low)
+#         high = int(high)
+
+#         print("Request to plot channels %d to %d, inclusive" % (low, high))
+        
+#         if low < high and low >= 0 and high < 64:
+#             plt.title("Event %d, Channels %d-%d" % (event.event_num, low, high))
+#             chanstograph = range(low,high+1)
+#     except ValueError as e:
+#         pass
+
+#     try:
+#         chanstograph = [int(x) for x in args.split(',')]
+
+#         print("Request to plot many individual channels ", chanstograph)
+        
+#     except ValueError as e:
+#         pass
+
+#     if not chanstograph is None:
+        
+#         for n in chanstograph:
+#             try:
+#                 chan = event.channels[n]
+#                 plt.plot(range(0,1024), chan[0:1024], label='Channel %d' % n)
+#             except:
+#                 pass
+
+#         # The dumbest coordinate system
+            
+#         ax.axhline(y=4, dashes=(2,2,2,2), color='black', label='No data')
+#         ax.axhline(y=8, dashes=(1,1,1,1), color='black', label='Masked')
+#         plt.axhspan(0, 8, alpha=0.2, facecolor='cyan', label='Flagged')
+            
+#         lgd = ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
+#         # plt.tight_layout()
+#         # ax.add_artist(lgd)
+#         plt.show(block=False)
+#     else:
+#         try:
+#             # For singles, show individual masks, overflows, and underflows
+            
+#             var = int(args)
+#             if var in event.channels:
+#                 chan = event.channels[var]
+
+#                 # Python cannot do signed bitwise math correctly unless width is
+#                 # coming into play?
+
+#                 # Get it in numpy so bitwise works
+#                 x = np.arange(1024, dtype=np.int16)
+#                 y = chan[0:1024]
+
+#                 # Test your cleverness with the masking
+#                 # ~ with signed is going to give you a bad day.
+#                 flags = (y & 0xF)
+#                 valid = 1 - (((flags & 0x8) >> 3) | ((flags & 0x4) >> 2) | ((flags & 0x2) >> 1) | (flags & 0x1))
+#                 ou = (((flags & 0x2) >> 1) | (flags & 0x1))
+                
+#                 xvalid = x[valid > 0]
+#                 yvalid = y[valid > 0]
+#                 validsegs = np.column_stack((xvalid, yvalid))
+                                
+#                 xou = x[ou > 0]
+#                 you = y[ou > 0]
+#                 ousegs = np.column_stack((xou, you))
+                                  
+#                 ax.set_ylim(int(np.min(yvalid)), int(np.max(yvalid)))
+
+#                 # Add some line collections
+#                 ax.add_collection(LineCollection([validsegs]))
+#                 ax.add_collection(LineCollection([ousegs]))
+
+#                 alreadyLabeled = False
+#                 for mlow,mhigh in chan.masks:
+#                     plt.axvspan(mlow, mhigh, alpha=0.3, facecolor='gray', label='Masked' if not alreadyLabeled else '')
+#                     alreadyLabeled = True
+                    
+#                 ax.set_title("Event %d, Channel %d" % (event.event_num, var))
+#                 ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+#                 plt.show(block=False)
+#             else:
+#                 print("Channel not present in this event")
+#         except Exception as e
+#             print(e)
+#             print("Could not understand your channel specification")
             
 def jump(args):
     global event, pos, i
@@ -362,10 +395,16 @@ def refresh():
 # Shell out and run the A2x_tool
 def execute(args):
 
+    global target
     print("Running ./A2x_tool.py %s...\n(Output will be displayed upon command completion)" % args)
-    
+
+    arglist = args.split()
+    if not target is None:
+        arglist.insert(0, "-a %d" % targetport)
+        arglist.insert(0, target)
+
     # Pass these directly to A2x_tool
-    results = subprocess.run(["./A2x_tool.py", *args.split()], stdout=subprocess.PIPE)
+    results = subprocess.run(["./A2x_tool.py", *arglist], stdout=subprocess.PIPE) 
 
     # Output the results
     print(str(results.stdout))
@@ -397,6 +436,9 @@ class PacketteShell(cmd.Cmd):
     def do_graph(self, arg):
         'Graph a channel or range of channels: graph 0-31, graph 4'
         graph(arg)
+    def do_graph2(self,arg):
+        graph2(arg)
+        
     def do_toggle(self, arg):
         'Toggle between SCA (capacitor) view and time-ordered: toggle'
         toggle_view()
@@ -412,6 +454,15 @@ class PacketteShell(cmd.Cmd):
     def do_export(self, arg):
         'Export the cached view of a channel in ascii to a file.  e.g. export 5:destination.dat'
         export(arg)
+    def do_target(self, arg):
+        global target
+        if len(arg) == 0:
+            print("Currently targetted at: %s" % ( "Nothing" if target is None else "%s:%d" % (target, targetport)))
+        elif arg == 'off':
+            target = None
+        else:
+            target = arg
+            # execute("%s -a %d" % (target, targetport))
     def do_quit(self, arg):
         'Quit'
         self.close()

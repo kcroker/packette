@@ -30,6 +30,7 @@ import os
 import time
 import socket
 import select
+from itertools import islice
 
 from collections import namedtuple, OrderedDict
 
@@ -592,17 +593,16 @@ class packetteRun(object):
     # This does a hash-table lookup based on event number
     # (no support for slicing)
     #
-    def __getitem__(self, key):
+    def eventByNum(self, key):
         return self.loadEvent(key)
 
-    #
-    # This is much more natural behaviour...
-    # (since I use events within a run like a list, who looks up individual event number?)
-    #  so I need to shift to this)
-    #
-    def getnth(self, index):
-        return self[next(iter(self.offsetTable.keys))]
-    
+    # This is probably stupidly slow >_<
+    def __getitem__(self, index):
+
+        # How fucking arcane is this?
+        return self.loadEvent(next(islice(self.offsetTable.keys(), index, None)))
+
+   
     # For underlying streams that are growing, we can update the index
     def updateIndex(self):
         # Start parsing offsets at the last successful spot
@@ -668,7 +668,7 @@ class packetteRun(object):
             # through events in order
             try:
                 event_num, whatever = self.offsetIterator.__next__()
-                event = self.run[event_num]
+                event = self.run.loadEvent(event_num)
             except IndexError as e:
                 raise StopIteration
             

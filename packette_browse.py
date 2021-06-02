@@ -77,6 +77,13 @@ def stream_current():
 
         # Output it
         print(event)
+
+        # Print out ordering
+        if events.SCAView:
+            print("Data is rendered in capacitor ordering")
+        else:
+            print("Data is rendered in time ordering")
+            
     except:
         print("No events yet in stream...")
 
@@ -149,15 +156,17 @@ def parse_speclist(speclist):
                 tmp = bounds[1]
                 bounds[1] = bounds[0]
                 bounds[0] = tmp
+
+            # Add it to the appropriate list
+            # Interpret bounds as inclusive
+            if negated:
+                exclusions += range(bounds[0], bounds[1]+1)
+            else:
+                inclusions += range(bounds[0], bounds[1]+1)
+
         except ValueError as e:
             print("Did not understand %s, skipping..." % spec)
 
-        # Add it to the appropriate list
-        # Interpret bounds as inclusive
-        if negated:
-            exclusions += range(bounds[0], bounds[1]+1)
-        else:
-            inclusions += range(bounds[0], bounds[1]+1)
 
     print("Include: ", inclusions)
     print("Exclude: ", exclusions)
@@ -169,16 +178,9 @@ def graph(arg):
 
     global run,i
     
-    # Set up the graph
-    plt.cla()
-    ax = plt.gca()
+    # Number of valid directives
+    graphs = []
     
-    ax.set_xlabel('Capacitor')
-    ax.set_ylabel('ADC value')
-    ax.grid(True)
-    ax.set_xlim(-5,1030)
-
-
     # Interpret as semi-colon separated individual directives
     directives = [x.strip() for x in arg.split(';')]
 
@@ -199,7 +201,7 @@ def graph(arg):
                 chanlist = parse_speclist(specs[1])
             else:
                 chanlist = parse_speclist(specs[0])
-                
+            
         except ValueError as e:
             print("Could not understand ", directive)
             continue
@@ -208,8 +210,7 @@ def graph(arg):
         for eventpos in eventspec:
             for n in chanlist:
                 try:
-                    chan = events[eventpos].channels[n]
-                    plt.plot(range(0,1024), chan[0:1024], label='Event %d, Channel %d' % (eventpos, n))
+                    graphs.append((events[eventpos].channels[n], eventpos, n))
                 except (KeyError, StopIteration) as e:
                     print("Missing Event %d, Channel %d?" % (eventpos,n))
 
@@ -219,12 +220,24 @@ def graph(arg):
     # ax.axhline(y=8, dashes=(1,1,1,1), color='black', label='Masked')
     # plt.axhspan(0, 8, alpha=0.2, facecolor='cyan', label='Flagged')
 
-    lgd = ax.legend() #bbox_to_anchor=(1.04,1), loc="upper left")
+    if len(graphs) > 0:
+        # Set up the graph
+        plt.cla()
+        ax = plt.gca()
+    
+        ax.set_xlabel('Capacitor')
+        ax.set_ylabel('ADC value')
+        ax.grid(True)
+        ax.set_xlim(-5,1030)
+
+        for chan,eventpos,n in graphs:                    
+            plt.plot(range(0,1024), chan[0:1024], label='Event %d, Channel %d' % (eventpos, n))
+
+        lgd = ax.legend() #bbox_to_anchor=(1.04,1), loc="upper left")
     
     # ax.add_artist(lgd)
 
-    # Show the graph
-    plt.show(block=False)
+        plt.show(block=False)
                    
             
 #     #  a) a channel: 56
@@ -515,6 +528,7 @@ class PacketteShell(cmd.Cmd):
 
     def emptyline(self):
         # Do nothing
+        stream_current()
         return
     
     def close(self):

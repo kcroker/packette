@@ -7,7 +7,7 @@ rate=100
 set -m
 
 # See if the target board is up
-ping -c 2 -i 0.2 '$3' > /dev/null
+ping -c 2 -i 0.2 "$3" > /dev/null
 
 if [ "$?" -ne "0" ]; then
     echo "Looks like the board is not up?"

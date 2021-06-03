@@ -474,8 +474,10 @@ class PacketteShell(cmd.Cmd):
         elif arg == 'off':
             target = None
         else:
+            # Since target != None, it'll do the insertion and aim, every time
             target = arg
-            # execute("%s -a %d" % (target, targetport))
+            execute(' ')
+            
     def do_quit(self, arg):
         'Quit'
         self.close()

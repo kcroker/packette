@@ -182,7 +182,7 @@ def graph(arg):
     graphs = []
     
     # Interpret as semi-colon separated individual directives
-    directives = [x.strip() for x in arg.split(';')]
+    directives = [x.strip() for x in arg.split('&')]
 
     # Each directive looks like
     #  [<event spec>:]<channel spec>
@@ -210,6 +210,7 @@ def graph(arg):
         for eventpos in eventspec:
             for n in chanlist:
                 try:
+                    events[eventpos].channels[n].clearMasks()
                     graphs.append((events[eventpos].channels[n], eventpos, n))
                 except (KeyError, StopIteration) as e:
                     print("Missing Event %d, Channel %d?" % (eventpos,n))
@@ -230,6 +231,9 @@ def graph(arg):
         ax.grid(True)
         ax.set_xlim(-5,1030)
 
+        # board id belongs to the event, but we enforce equality across a run
+        ax.set_title("Board @ %s, %s ordering" % (event.prettyid(), "capacitor" if events.SCAView else "time"))
+        
         for chan,eventpos,n in graphs:                    
             plt.plot(range(0,1024), chan[0:1024], label='Event %d, Channel %d' % (eventpos, n))
 
@@ -448,10 +452,7 @@ class PacketteShell(cmd.Cmd):
             switch_channel(arg)
     def do_graph(self, arg):
         'Graph a channel or range of channels: graph 0-31, graph 4'
-        graph(arg)
-    def do_graph2(self,arg):
-        graph2(arg)
-        
+        graph(arg)        
     def do_toggle(self, arg):
         'Toggle between SCA (capacitor) view and time-ordered: toggle'
         toggle_view()
@@ -477,6 +478,10 @@ class PacketteShell(cmd.Cmd):
             # Since target != None, it'll do the insertion and aim, every time
             target = arg
             execute(' ')
+    def do_batch(self, arg):
+        cmds = [x.strip() for x in arg.split(';')]
+        for cmd in cmds:
+            self.onecmd(cmd)
             
     def do_quit(self, arg):
         'Quit'

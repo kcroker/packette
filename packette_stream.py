@@ -278,8 +278,11 @@ class packetteEvent(object):
             header['channel_mask'] >>= 1
             chan += 1
 
+    def prettyid(self):
+        return ':'.join(self.run.board_id.hex()[i:i+2] for i in range(0,12,2))
+    
     def __str__(self):
-        board_id = ':'.join(self.run.board_id.hex()[i:i+2] for i in range(0,12,2))
+        board_id = self.prettyid()
         msg = "\nBoard MAC:\t %s\n" % board_id
         msg += "Event number:\t %d\n" % self.event_num
         msg += "Timestamp:\t %d\n" % self.trigger_low

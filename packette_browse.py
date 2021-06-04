@@ -47,14 +47,16 @@ def stream_next():
     
     if event is None:
         print("No current event!")
-        return
+        return False
     
     if i+1 >= len(run):
         print("End of run.")
+        return False
     else:
         i += 1
         stream_current()
-
+        return True
+    
 def stream_prev():
     global event, pos, i
     
@@ -481,7 +483,15 @@ class PacketteShell(cmd.Cmd):
         cmds = [x.strip() for x in arg.split(';')]
         for cmd in cmds:
             self.onecmd(cmd)
-            
+
+    def do_ffwd(self, arg):
+        global event
+        'Fast-forward to the next non-empty event'
+        while len(event.channels) == 0 and stream_next():
+            pass
+                    
+        print("You should now be on a non-empty event (or end of run).")
+        
     def do_quit(self, arg):
         'Quit'
         self.close()

@@ -32,6 +32,7 @@ def create(leader):
     parser.add_argument('-I', '--initialize', action="store_true", help="Initialize the board")
     parser.add_argument('-t', '--threads', metavar="NUM_THREADS", type=int, help="Number of distinct ports to receive data.  Ports increment from the aimed port.", default=1)
 
+    parser.add_argument('--adctestpattern', help='ADC custom mode test pattern')
     parser.add_argument('-e', '--external', type=int, help='Adjust extriggering (odd is on)')
     parser.add_argument('-p', '--pedestal', type=int, help='Adjust hardware pedestal subtraction (odd is on)')
     parser.add_argument('-z', '--zsuppress', type=int, help='Adjust firmware zero channel suppression (odd is on)')
@@ -107,6 +108,12 @@ def connect(parser):
     # Set both adc's if requested
     # XXX? Is this wrong to do at this point?
     if not args.adcmode is None:
+        if not args.adctestpattern is None and args.adcmode == 'custom':
+            args.adctestpattern = int(args.adctestpattern, 0)
+            
+            ifc.AdcSetTestPat(0, args.adctestpattern)
+            ifc.AdcSetTestPat(1, args.adctestpattern)
+            
         ifc.AdcSetTestMode(0, args.adcmode)
         ifc.AdcSetTestMode(1, args.adcmode)
 

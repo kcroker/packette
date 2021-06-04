@@ -210,7 +210,6 @@ def graph(arg):
         for eventpos in eventspec:
             for n in chanlist:
                 try:
-                    events[eventpos].channels[n].clearMasks()
                     graphs.append((events[eventpos].channels[n], eventpos, n))
                 except (KeyError, StopIteration) as e:
                     print("Missing Event %d, Channel %d?" % (eventpos,n))

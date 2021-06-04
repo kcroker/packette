@@ -268,14 +268,15 @@ class packetteEvent(object):
 
         # For every channel thats on in the mask, make a dictionary entry to it
         chan = 0
+        chanmask = header['channel_mask'] 
         while chan < 64:
             # print("mask: %x, channel: %d" % (header['channel_mask'], chan))
 
-            if header['channel_mask'] & 0x1:
+            if chanmask & 0x1:
                 self.channels[chan] = packetteChannel(0, np.empty([0], dtype=np.int16), self.run)
 
             # Advance to the next place in the mask
-            header['channel_mask'] >>= 1
+            chanmask >>= 1
             chan += 1
 
     def prettyid(self):
@@ -362,6 +363,8 @@ class packetteRun(object):
                             try:
                                 # Since its a datagram, this will block until timeout or an entire packet is pulled
                                 # from the underlying buffers
+
+                                # XXX DOES NOT PERFORM SEQUENCE NUMBER CHECKS, NEEDS TO
                                 stuff = s.recv(4096)
                                 tmpfile.write(stuff)
                             except socket.timeout as e:
@@ -537,46 +540,53 @@ class packetteRun(object):
             if prev_event_num < header['event_num']:
                 break
             
-            # Populate the channel data from this transport packet
-            chan = event.channels[header['channel']]
-            
-            # Is this the first data for this channel? 
-            if len(chan) == 0:
-                # Make a new block of memory
-                chan.drs4_stop = header['drs4_stop']
-                chan.payload = np.zeros(header['total_samples'], dtype=np.int16)
-                chan.length = header['total_samples']
+            # Check to see if this channel is actually in the mask
+            if header['channel_mask'] & (1 << header['channel']) > 0:
+                #print("Num samples: ", header['num_samples'])
                 
-                # Add a 5 sample symmetric mask around the stop sample
-                if self.SCAView:
-                    chan.mask(header['drs4_stop'] - 20, header['drs4_stop'] + 20)
-                else:
-                    chan.mask(-20, 20)
-                
-            # Now, since the underlying stream may be growing, we might have gotten a header
-            # but we don't have enough underlying data to finish out the event here
-            capacitors = fp.read(header['num_samples']*SAMPLE_WIDTH)
-            
-            # Verify that we *got* this amount
-            if not len(capacitors) == header['num_samples']*SAMPLE_WIDTH:
+                # Populate the channel data from this transport packet
+                chan = event.channels[header['channel']]
 
-                # We didn't get this payload yet, that's fine.
-                # It'll work on the next read, when we seek back to the last
-                # unprocessed header.
-                break
-                
-            # Read the payload from this packet
-            payload = np.frombuffer(capacitors, dtype=np.int16)
+                # Is this the first data for this channel? 
+                if len(chan) == 0:
+                    # Make a new block of memory
+                    chan.drs4_stop = header['drs4_stop']
+                    chan.payload = np.zeros(header['total_samples'], dtype=np.int16)
+                    chan.length = header['total_samples']
 
-            # Write the payload at the relative offset within the numpy array
-            # XXX This will glitch if you try to give a rel_offset into a
-            #     block that is the block length you are writing
-            #     The firmware should never do this to you though...
-            chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = payload
+                    # Add a 5 sample symmetric mask around the stop sample
+                    maskWidth = 0
+                    if self.SCAView:
+                        chan.mask(header['drs4_stop'] - maskWidth, header['drs4_stop'] + maskWidth)
+                    else:
+                        chan.mask(-maskWidth, maskWidth)
 
-            # print("\tHEY Got a rel_offset: ", header['rel_offset'], file=sys.stderr)
-            # Debug (set the final relative offset)
-            chan.rel_offset = header['rel_offset']
+                # Now, since the underlying stream may be growing, we might have gotten a header
+                # but we don't have enough underlying data to finish out the event here
+                capacitors = fp.read(header['num_samples']*SAMPLE_WIDTH)
+
+                # Verify that we *got* this amount
+                if not len(capacitors) == header['num_samples']*SAMPLE_WIDTH:
+
+                    # We didn't get this payload yet, that's fine.
+                    # It'll work on the next read, when we seek back to the last
+                    # unprocessed header.
+                    break
+
+                # Read the payload from this packet
+                payload = np.frombuffer(capacitors, dtype=np.int16)
+
+                # Write the payload at the relative offset within the numpy array
+                # XXX This will glitch if you try to give a rel_offset into a
+                #     block that is the block length you are writing
+                #     The firmware should never do this to you though...
+                # print("payload of length %d written to slice %d:%d" % (len(payload), header['rel_offset'], header['rel_offset'] + header['num_samples']))
+
+                chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = payload
+
+                # print("\tHEY Got a rel_offset: ", header['rel_offset'], file=sys.stderr)
+                # Debug (set the final relative offset)
+                chan.rel_offset = header['rel_offset']
 
         # Now we've loaded all the payloads, build the cache
         for data in event.channels.values():
@@ -698,7 +708,7 @@ def dumpPayload(array, width=3):
 
     # Print out the rest if we need to
     if not (len(array) >> width) << width == len(array):
-        msg += "caps [%4d, %4d] :%s\n" % ( (len(array)>>width) << width, len(array) - 1, array[-(len(array)>>width)<<width:])
+        msg += "caps [%4d, %4d] :%s\n" % ( (len(array)>>width) << width, len(array) - 1, array[(len(array)>>width)<<width:])
     
     return msg
 

@@ -648,7 +648,7 @@ int main(int argc, char **argv) {
     sigaction(SIGTERM, NULL, &old_action);
     if (old_action.sa_handler != SIG_IGN)
       sigaction(SIGTERM, &new_action, NULL);
-    
+
     ///////////////// INITIALIZATION ///////////////
     
     // Seed the random number generator with ... a better random number
@@ -748,7 +748,7 @@ int main(int argc, char **argv) {
       msgs[i].msg_hdr.msg_iov    = &iovecs[i];
       msgs[i].msg_hdr.msg_iovlen = 1;
     }
-
+ 
     ///////////////////// PERFORMANCE REPORTING ///////////////////
 
     // Set up volatile pointers into the shared memory
@@ -849,10 +849,15 @@ int main(int argc, char **argv) {
     if (old_action.sa_handler != SIG_IGN)
       sigaction(SIGINT, &new_action, NULL);
 
-    // Capture SIGTERM too (if we're the parent)
+    // Capture SIGTERM too
     sigaction(SIGTERM, NULL, &old_action);
     if (old_action.sa_handler != SIG_IGN)
       sigaction(SIGTERM, &new_action, NULL);
+
+    // Capture SIGCHLD too (if we're the parent)
+    sigaction(SIGCHLD, NULL, &old_action);
+    if (old_action.sa_handler != SIG_IGN)
+      sigaction(SIGCHLD, &new_action, NULL);
 
     // Allocate and initialize some local accounting for da kids
     if(!(previous_processed = (unsigned long *)malloc(sizeof(unsigned long)*children*2))) {
@@ -895,11 +900,19 @@ int main(int argc, char **argv) {
       // Check for Ctrl+C
       if(interrupt_flag) {
 	fprintf(stderr,
-	    "packette (parent): Received SIGINT or SIGTERM, waiting for children to finish...\n");
+	    "packette (parent): Received SIGINT, SIGCHLD from someone, or SIGTERM.  Instructing everyone to exit and waiting for them...\n");
+
+	// Signal all children to die off (one may have failed, even if others succeeded)
+	k = children;
+	while(k--) {
+	  kill(kids[k], SIGTERM);
+	  fprintf(stderr,
+		  "packette (parent): Told PID %d to exit gracefully.\n", kids[k]);
+	}
 	break;
       }
-
-      // Check for the all children finished condition
+      
+      // Check for the all children finished condition (they might just finish naturally)
       // (The errno check is required in case the parent races
       //  and the child process is not completely set up yet)
       k = children;

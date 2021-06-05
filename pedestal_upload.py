@@ -52,8 +52,6 @@ for chan in aPedestal.mean:
             board.poke(tmp, silent=True)
             board.transact()
             
-            board.clearTransaction()
-
             # Clear it
             tmp = {}
         
@@ -65,7 +63,6 @@ if count > 0 and count < maxSetsPerPacket:
     # Execute the transaction
     board.poke(tmp, silent=True)
     board.transact()
-    board.clearTransaction()
     print("Sent residual chunt", chan, i, ped)
 
 # Done

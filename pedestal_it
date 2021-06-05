@@ -15,18 +15,28 @@ if [ "$?" -ne "0" ]; then
 fi
 
 echo "Running packette in the background..."
-./packette 10.0.6.254 -q -f "$1" -t $threads -p $baseport -n "$2" &
+./packette 10.0.6.254 -q -f "$1" -t $threads -p $baseport &
 pid=$!
 
-echo "packette (parent) running at PID $pid."
+echo "Giving packette some time to start..."
+sleep 0.5
+
+kill -0 "$pid"
+if [ "$?" -ne "0" ]; then
+    echo "packette seems to have failed, is the port already bound?"
+    exit 1
+fi
+
 echo "Requesting unmodified waveforms..."
 time ./A2x_tool.py -I -c 0xffffffffffffffff --zsuppress 0 --pedestal 0 -r $rate -t $threads -a $baseport -N "$2" "$3"
 
 echo "Sleeping..."
 sleep 1
 
+echo "Verifying that packette is still running (meaning we got data)..."
+    
 echo "Computing the pedestal..."
-pedestal=`./pedestal_calibration.py rawdata/$1*.ordered | tail -n 1`
+pedestal=`./pedestal_calibration.py rawdata/$1_*.ordered | tail -n 1`
 
 echo "Telling packette and everything descended from PID $pid to stop listening..."
 kill -2 -$pid

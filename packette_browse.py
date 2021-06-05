@@ -15,6 +15,39 @@ parser.add_argument('fnames', type=str, nargs='+', help='Files to load or IP add
 
 args = parser.parse_args()
 
+# Be dumb.
+strips = {  1  : (0,62),
+            2  : (1,61),
+            3  : (2,60),
+            4  : (3,59),
+            5  : (4,58),
+            6  : (5,57),
+            7  : (6,56),
+           
+            8  : (8,54),
+            9  : (9,53),
+            10  : (10, 52),
+            11  : (11, 51),
+            12  : (12, 50),
+            13  : (13, 49),
+            14  : (14, 48),
+           
+            15  : (16, 46),
+            16  : (17, 45),
+            17  : (18, 44),
+            18  : (19, 43),
+            19  : (20, 42),
+            20  : (21, 41),
+            21  : (22, 40),
+           
+            22  : (24, 38),
+            23  : (25, 37),
+            24  : (26, 36),
+            25  : (27, 35),
+            26  : (28, 34),
+            27  : (29, 33),
+            28  : (30, 32)}
+
 targetport = None
 capture = args.capture
 target = None
@@ -123,11 +156,15 @@ def switch_channel(args):
     else:
         print("Channel %d not present in this event" % var)
 
+import re
 def parse_speclist(speclist):
 
     # Speclist looks like
-    # [!]n1, [!]n2-n3, ...
+    # [!]n1, [!]n2-n3, [!]s(x), [!]s(x)-s(y)...
 
+    # Make a regex for matching strip
+    p = re.compile(r's\((.*)\)')
+    
     # Received
     print("Received: ", speclist)
     
@@ -146,25 +183,44 @@ def parse_speclist(speclist):
             spec = spec[1:]
             
         try:
-            # Extract the bounds
-            bounds = [int(x) for x in spec.split('-')]
+            # First see if its a tile strip
+            m = p.match(spec)
+            if not m is None:
 
-            # Double up if necessary
-            if len(bounds) < 2:
-                bounds.append(bounds[0])
+                # Extract the strip number as a string
+                m = m.group(1)
+
+                print("Matched", m)
                 
-            # Flip the if reversed
-            if bounds[0] > bounds[1]:
-                tmp = bounds[1]
-                bounds[1] = bounds[0]
-                bounds[0] = tmp
+                # Get strip tuples of channels
+                tuples = [strips[s] for s in parse_speclist(m)]
 
-            # Add it to the appropriate list
-            # Interpret bounds as inclusive
-            if negated:
-                exclusions += range(bounds[0], bounds[1]+1)
-            else:
-                inclusions += range(bounds[0], bounds[1]+1)
+                # Inefficient comparison ::puke::
+                for tup in tuples:
+                    if negated:
+                        exclusions += tup
+                    else:
+                        inclusions += tup 
+            else:        
+                # Extract the bounds
+                bounds = [int(x) for x in spec.split('-')]
+
+                # Double up if necessary
+                if len(bounds) < 2:
+                    bounds.append(bounds[0])
+                
+                # Flip the if reversed
+                if bounds[0] > bounds[1]:
+                    tmp = bounds[1]
+                    bounds[1] = bounds[0]
+                    bounds[0] = tmp
+
+                # Add it to the appropriate list
+                # Interpret bounds as inclusive
+                if negated:
+                    exclusions += range(bounds[0], bounds[1]+1)
+                else:
+                    inclusions += range(bounds[0], bounds[1]+1)
 
         except ValueError as e:
             print("Did not understand %s, skipping..." % spec)

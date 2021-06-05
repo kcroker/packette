@@ -499,6 +499,10 @@ class packetteRun(object):
             # Wasn't in there
             pass
         
+        print("Requested to load %d not in cache" % event_num)
+        #import pdb
+        #pdb.set_trace()
+        
         # Table lookup
         fhandle, offset = self.offsetTable[event_num]
 
@@ -555,7 +559,7 @@ class packetteRun(object):
                     chan.length = header['total_samples']
 
                     # Add a 5 sample symmetric mask around the stop sample
-                    maskWidth = 0
+                    maskWidth = 15
                     if self.SCAView:
                         chan.mask(header['drs4_stop'] - maskWidth, header['drs4_stop'] + maskWidth)
                     else:
@@ -665,28 +669,31 @@ class packetteRun(object):
     def __len__(self):
         return len(self.offsetTable)
 
-    # An iterator to support list-like interaction
-    def __iter__(self):
-        return self.runIterator(self)
+    # List accesses via accessor are fine, but
+    # using enumerate() accesses the items.
+    
+    # # An iterator to support list-like interaction
+    # def __iter__(self):
+    #     return self.runIterator(self)
 
-    class runIterator(object):
-        def __init__(self, run):
-            self.run = run
-            self.i = 0
-            self.offsetIterator = iter(run.offsetTable.items())
+    # class runIterator(object):
+    #     def __init__(self, run):
+    #         self.run = run
+    #         self.i = 0
+    #         self.offsetIterator = iter(run.offsetTable.items())
 
-        def __next__(self):
+    #     def __next__(self):
 
-            # We'll need an enumeration of the offsetTable to go
-            # through events in order
-            try:
-                event_num, whatever = self.offsetIterator.__next__()
-                event = self.run.loadEvent(event_num)
-            except IndexError as e:
-                raise StopIteration
+    #         # We'll need an enumeration of the offsetTable to go
+    #         # through events in order
+    #         try:
+    #             event_num, whatever = self.offsetIterator.__next__()
+    #             event = self.run.loadEvent(event_num)
+    #         except IndexError as e:
+    #             raise StopIteration
             
-            self.i += 1
-            return event
+    #         self.i += 1
+    #         return event
 
 # A human-readable view of the (cached) array state
 def dumpCachedView(array, width=3):

@@ -30,7 +30,9 @@ maxSetsPerPacket = 1
 count = 0
 tmp = {}
 for chan in aPedestal.mean:
-    for i, ped in enumerate(aPedestal.mean[chan]):
+    # Write backwards to work around bug in FW108
+    derp = enumerate(aPedestal.mean[chan])
+    for i, ped in derp:
 
         # Truncate it
         try:
@@ -58,6 +60,36 @@ for chan in aPedestal.mean:
             # Reset count
             count = 0
 
+for chan in aPedestal.mean:
+    for i, ped in enumerate(aPedestal.mean[chan]):
+        # Truncate it
+        try:
+            ped = (int(ped) & 0xFFFF) >> 4
+        except ValueError:
+            print("WARNING bad pedestal, channel %d capacitor %d" % (chan, i))
+            continue
+        
+        # Multiplication by 4 because 32bits per address
+        addr = ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
+                
+        # This method guarantees that only one 'register write'
+        # operation is required to set all these registers
+        tmp[addr] = ped if ped >= 0 else ped + 0xFFF + 1
+        count += 1 
+
+        if count == maxSetsPerPacket:
+            # Execute the transaction (now clears transactions)
+            board.poke(tmp, silent=True)
+            board.transact()
+            
+            # Clear it
+            tmp = {}
+        
+            # Reset count
+            count = 0
+
+        break;
+    
 # Was there any leftover?
 if count > 0 and count < maxSetsPerPacket:
     # Execute the transaction

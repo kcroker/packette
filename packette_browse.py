@@ -487,6 +487,8 @@ class PacketteShell(cmd.Cmd):
     def do_ffwd(self, arg):
         global event
         'Fast-forward to the next non-empty event'
+        stream_next()
+        
         while len(event.channels) == 0 and stream_next():
             pass
                     

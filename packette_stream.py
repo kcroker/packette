@@ -3,7 +3,7 @@
 #
 # packette_python.py
 # Copyright(c) 2020 Kevin Croker
-#  for the Nishimura Instrumentation Fronteir Taskforce
+#  for the Nishimura Instrumentation Frontier Taskforce
 #
 # GNU GPL v3
 #
@@ -368,6 +368,7 @@ class packetteRun(object):
                                 stuff = s.recv(4096)
                                 tmpfile.write(stuff)
                             except socket.timeout as e:
+                                # If the parent has died, we should die too
                                 if not os.getppid() == ppid:
                                     exit(0)
                     except OSError as e:
@@ -398,10 +399,8 @@ class packetteRun(object):
         # UUU Need to save state to index files, so you don't need to rebuild the
         # index every time.
         #
-        # XXX Also, it feels like we've loading the entire event stream
-        # which should not be happening.  The only thing that should be loaded
-        # is cache.
-        #
+
+        # UUU We should really be using pool here to index large data sets in parallel
         
         # See if we keep the data on the HD/inside OS buffers
         for fhandle,fp in self.fps.items():
@@ -453,6 +452,11 @@ class packetteRun(object):
 
             # This logic is being weird.  Be explicit.
             if index == self.header_size or prev_event_num < header['event_num']:
+
+                # Sanity check
+                if header['event_num'] in self.offsetTable:
+                    raise Exception("Event number collision!", header['event_num'], (fhandle, index - self.header_size))
+                
                 # Return a tuple with the stream and the byte position within the stream
                 self.offsetTable[header['event_num']] = (fhandle, index - self.header_size)
 

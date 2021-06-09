@@ -30,9 +30,9 @@ def pedestalAccumulator(fname):
     # Open the packette run (with view set to capacitor ordering)
     events = packette.packetteRun(fname, SCAView=True)
     
-    # Get an event
-    firstevent = iter(events).__next__()
-
+    # Get the first event
+    firstevent = events[events.getArrivalOrderedEventNumbers()[0]]
+    
     # Pedestal accumulation assumes that the channel mask NEVER CHANGES!!!
     chans = firstevent.channels.keys()
 

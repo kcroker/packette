@@ -30,8 +30,13 @@ fi
 echo "Requesting unmodified waveforms..."
 time ./A2x_tool.py -I -c 0xffffffffffffffff --zsuppress 0 --pedestal 0 -r $rate -t $threads -a $baseport -N "$2" "$3"
 
-echo "Sleeping..."
-sleep 1
+if [ "$?" -ne "0" ]; then
+    echo "Waveform request has failed.  Killing packette."
+    kill -2 -$pid
+fi
+
+#echo "Sleeping..."
+#sleep 1
 
 echo "Verifying that packette is still running (meaning we got data)..."
     

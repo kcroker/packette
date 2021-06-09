@@ -69,14 +69,16 @@ print("Browsing run described by: ", args.fnames)
 
 histf = '.packette_browse_history'
 
-run = list(enumerate(events))
+# This contains an ordered list of event numbers present within
+# the run (possibly coming from many distinct files)
+run = events.getArrivalOrderedEventNumbers()
 
 i = 0
 pos = None
 event = None
 
 def stream_next():
-    global event, pos, i
+    global event, i
     
     if event is None:
         print("No current event!")
@@ -91,7 +93,7 @@ def stream_next():
         return True
     
 def stream_prev():
-    global event, pos, i
+    global event, i
     
     if event is None:
         print("No current event!")
@@ -103,12 +105,14 @@ def stream_prev():
     else:
         print("Start of run.")
 
+import traceback
+    
 def stream_current():
-    global event, pos, i
+    global event, i
 
     # Update da kine
     try:
-        pos, event = run[i]
+        event = events[run[i]]
 
         # Output it
         print(event)
@@ -119,7 +123,9 @@ def stream_current():
         else:
             print("Data is rendered in time ordering")
             
-    except:
+    except Exception as e:
+        #print(e)
+        #traceback.print_tb(e.__traceback__)
         print("No events yet in stream...")
 
 
@@ -142,7 +148,7 @@ def toggle_view():
         print("Cached views are now time-orderd")
         
 def switch_channel(args):
-    global event, pos, i
+    global event, i
     
     if event is None:
         print("No current event!")
@@ -242,6 +248,8 @@ def graph(arg):
     # Interpret as semi-colon separated individual directives
     directives = [x.strip() for x in arg.split('&')]
 
+    eventcnt = 0
+    
     # Each directive looks like
     #  [<event spec>:]<channel spec>
 
@@ -268,10 +276,13 @@ def graph(arg):
         for eventpos in eventspec:
             for n in chanlist:
                 try:
-                    graphs.append((events[eventpos].channels[n], eventpos, n))
+                    graphs.append((events[run[eventpos]].channels[n], eventpos, n))
                 except (KeyError, StopIteration) as e:
                     print("Missing Event %d, Channel %d?" % (eventpos,n))
 
+        # Event count for alphap
+        eventcnt += len(eventspec)
+        
     # # Derp
     # # The dumbest coordinate system
     # ax.axhline(y=4, dashes=(2,2,2,2), color='black', label='No data')
@@ -292,7 +303,7 @@ def graph(arg):
         ax.set_title("Board @ %s, %s ordering" % (event.prettyid(), "capacitor" if events.SCAView else "time"))
         
         for chan,eventpos,n in graphs:                    
-            plt.plot(range(0,1024), chan[0:1024], label='Event %d, Channel %d' % (eventpos, n))
+            plt.plot(range(0,1024), chan[0:1024], label='Event %d, Channel %d' % (eventpos, n), alpha=1 if 2./eventcnt > 1 else 2./eventcnt)
 
         lgd = ax.legend() #bbox_to_anchor=(1.04,1), loc="upper left")
     
@@ -417,7 +428,7 @@ def graph(arg):
 #             print("Could not understand your channel specification")
             
 def jump(args):
-    global event, pos, i
+    global event, i
     
     try:
         var = int(args)
@@ -461,11 +472,13 @@ def export(arg):
         
 def refresh():
     global run
-    events.updateIndex()
-    run = list(enumerate(events))
-    jump(len(events)-1)
-    stream_current()
 
+    resptuple = events.updateIndex()
+    print("Indexed %d additional events in ~%f seconds" % resptuple)
+
+    # Go to the end
+    jump(len(events)-1)
+    
 # Shell out and run the A2x_tool
 def execute(args):
 
@@ -484,7 +497,7 @@ def execute(args):
     print(str(results.stdout))
     
 class PacketteShell(cmd.Cmd):
-    global event, pos, run
+    global event, run
     
     intro = 'Welcome to packette better_browse.   Type help or ? to list commands.\n'
     prompt_text = "Event #%d @ %d of %d (packette) " 
@@ -509,6 +522,9 @@ class PacketteShell(cmd.Cmd):
             switch_channel(arg)
     def do_graph(self, arg):
         'Graph a channel or range of channels: graph 0-31, graph 4'
+        if len(arg) == 0:
+            arg = '0-63'
+            
         graph(arg)        
     def do_toggle(self, arg):
         'Toggle between SCA (capacitor) view and time-ordered: toggle'
@@ -526,7 +542,13 @@ class PacketteShell(cmd.Cmd):
         'Export the cached view of a channel in ascii to a file.  e.g. export 5:destination.dat'
         export(arg)
     def do_target(self, arg):
+        'In capture mode, aim a board at the listening socket, and make this board the default passed to cmd'  
         global target
+
+        if not args.capture:
+            print("Only relevant in --capture mode.  You have loaded files.")
+            return False
+        
         if len(arg) == 0:
             print("Currently targetted at: %s" % ( "Nothing" if target is None else "%s:%d" % (target, targetport)))
         elif arg == 'off':
@@ -536,13 +558,15 @@ class PacketteShell(cmd.Cmd):
             target = arg
             execute(' ')
     def do_batch(self, arg):
+        'Run commands separated by ; in succession'
         cmds = [x.strip() for x in arg.split(';')]
         for cmd in cmds:
             self.onecmd(cmd)
 
     def do_ffwd(self, arg):
-        global event
         'Fast-forward to the next non-empty event'
+
+        global event
         stream_next()
         
         while len(event.channels) == 0 and stream_next():
@@ -571,10 +595,10 @@ class PacketteShell(cmd.Cmd):
 
 
     def postcmd(self, stop, line):
-        global event, pos, i
+        global event, i
 
         if not event is None:
-            self.prompt = self.prompt_text % (event.event_num, pos, len(run))
+            self.prompt = self.prompt_text % (event.event_num, i, len(run))
         else:
             print(" -- No events in run yet.  Take data and refresh. -- ")
 
@@ -583,14 +607,14 @@ class PacketteShell(cmd.Cmd):
         return stop
 
     def preloop(self):
-        global run 
+        global run, i, event
         stream_current()
 
         # Load the history file
         if os.path.exists(histf):
             readline.read_history_file(histf)
              
-        self.prompt = '(packette) ' if event is None else self.prompt_text % (event.event_num, pos, len(run))
+        self.prompt = '(packette) ' if event is None else self.prompt_text % (event.event_num, i, len(run))
 
     def postloop(self):
         readline.write_history_file(histf)

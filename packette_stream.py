@@ -30,7 +30,7 @@ import os
 import time
 import socket
 import select
-from itertools import islice
+import bisect
 
 from collections import namedtuple, OrderedDict
 
@@ -312,7 +312,7 @@ class packetteRun(object):
         # Check for stdin
         self.header_size = packette_transport.size
         self.board_id = None
-        self.eventlists = []
+        self.orderedEventList = []
         self.offsetTable = OrderedDict()
         self.eventCache = OrderedDict()
 
@@ -420,6 +420,8 @@ class packetteRun(object):
         # Lookups can then be done by seeking in the underlying stream
         # Start loading in event data
         prev_event_num = -1
+        neweventcnt = 0
+
         #offsetTable = {}
 
         # Yikes, forgot to do the initial seek
@@ -453,7 +455,15 @@ class packetteRun(object):
             if index == self.header_size or prev_event_num < header['event_num']:
                 # Return a tuple with the stream and the byte position within the stream
                 self.offsetTable[header['event_num']] = (fhandle, index - self.header_size)
+
+                # Do an event-number sorted insertion
+                bisect.insort(self.orderedEventList, header['event_num'])
+
+                # Keep track that we've passed an event boundary
                 prev_event_num = header['event_num']
+
+                # Count
+                neweventcnt += 1
                 
             # Increment the index by the size of this packet's payload
             index += header['num_samples'] * SAMPLE_WIDTH
@@ -463,7 +473,14 @@ class packetteRun(object):
 
         # Set the most recently successful read
         self.fp_indexed[fhandle] = index
-        
+
+        # Return it
+        return neweventcnt
+    
+    # An accessor method to hide the variable
+    def getArrivalOrderedEventNumbers(self):
+        return self.orderedEventList
+    
     # Time ordered views return capacitor DRS4_STOP when requesting index 0
     # Capacitor ordered views return capacitor 0 when requesting index 0
     def setSCAView(self, flag):
@@ -497,11 +514,9 @@ class packetteRun(object):
             return self.eventCache[event_num]
         except KeyError as e:
             # Wasn't in there
+            print("DEBUG (packette_stream.py): cache MISS on event #", event_num)
             pass
-        
-        print("Requested to load %d not in cache" % event_num)
-        #import pdb
-        #pdb.set_trace()
+
         
         # Table lookup
         fhandle, offset = self.offsetTable[event_num]
@@ -606,22 +621,15 @@ class packetteRun(object):
         # Return this event
         return event
 
-    #
-    # This does a hash-table lookup based on event number
-    # (no support for slicing)
-    #
-    def eventByNum(self, key):
-        return self.loadEvent(key)
+    # Implement this as a dictionary for fast accesses
+    def __getitem__(self, eventnum):
+        return self.loadEvent(eventnum)
 
-    # This is probably stupidly slow >_<
-    def __getitem__(self, index):
-
-        # How fucking arcane is this?
-        return self.loadEvent(next(islice(self.offsetTable.keys(), index, None)))
-
-   
     # For underlying streams that are growing, we can update the index
     def updateIndex(self):
+        start = time.time()
+        neweventcnt = 0
+        
         # Start parsing offsets at the last successful spot
         for fhandle,fp in self.fps.items():
             print("packette_stream.py: syncing OS buffers for %s..." % self.fnames[fhandle],
@@ -638,7 +646,12 @@ class packetteRun(object):
                   file=sys.stderr)
 
             # This will seek from where we previously left off
-            self.parseOffsets(fp, fhandle, self.fp_indexed[fhandle])
+            neweventcnt += self.parseOffsets(fp, fhandle, self.fp_indexed[fhandle])
+
+        stop = time.time()
+
+        # Return how many new events and how long it took to index them
+        return (neweventcnt, stop - start)
     
     # So that pickling and unpickling works with file-backed imlementations
     def __getstate__(self):
@@ -669,31 +682,10 @@ class packetteRun(object):
     def __len__(self):
         return len(self.offsetTable)
 
-    # List accesses via accessor are fine, but
-    # using enumerate() accesses the items.
-    
-    # # An iterator to support list-like interaction
-    # def __iter__(self):
-    #     return self.runIterator(self)
-
-    # class runIterator(object):
-    #     def __init__(self, run):
-    #         self.run = run
-    #         self.i = 0
-    #         self.offsetIterator = iter(run.offsetTable.items())
-
-    #     def __next__(self):
-
-    #         # We'll need an enumeration of the offsetTable to go
-    #         # through events in order
-    #         try:
-    #             event_num, whatever = self.offsetIterator.__next__()
-    #             event = self.run.loadEvent(event_num)
-    #         except IndexError as e:
-    #             raise StopIteration
-            
-    #         self.i += 1
-    #         return event
+    # An iterator to support list-like interaction
+    def __iter__(self):
+        for i in self.offsetTable.keys():
+            yield self.loadEvent(i)
 
 # A human-readable view of the (cached) array state
 def dumpCachedView(array, width=3):

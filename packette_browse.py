@@ -118,7 +118,7 @@ def stream_current():
         print(event)
 
         # Print out ordering
-        if events.SCAView:
+        if events.property_stash.SCAView:
             print("Data is rendered in capacitor ordering")
         else:
             print("Data is rendered in time ordering")
@@ -140,9 +140,9 @@ def stream_current():
 # Not sure how to do this with GNU Readline....
 
 def toggle_view():
-    events.setSCAView(not events.SCAView)
+    events.setSCAView(not events.property_stash.SCAView)
 
-    if events.SCAView:
+    if events.property_stash.SCAView:
         print("Cached views are now capacitor-ordered")
     else:
         print("Cached views are now time-orderd")
@@ -157,7 +157,7 @@ def switch_channel(args):
     var = int(args)
     if var in event.channels:
         print(event.channels[var])
-        print("cachedViews are in " + ("capacitor ordering (e.g. SCA)\n" if events.SCAView else "time ordering (i.e. stop sample is first)\n"))
+        print("cachedViews are in " + ("capacitor ordering (e.g. SCA)\n" if events.property_stash.SCAView else "time ordering (i.e. stop sample is first)\n"))
 
     else:
         print("Channel %d not present in this event" % var)
@@ -300,7 +300,7 @@ def graph(arg):
         ax.set_xlim(-5,1030)
 
         # board id belongs to the event, but we enforce equality across a run
-        ax.set_title("Board @ %s, %s ordering" % (event.prettyid(), "capacitor" if events.SCAView else "time"))
+        ax.set_title("Board @ %s, %s ordering" % (event.prettyid(), "capacitor" if events.property_stash.SCAView else "time"))
         
         for chan,eventpos,n in graphs:                    
             plt.plot(range(0,1024), chan[0:1024], label='Event %d, Channel %d' % (eventpos, n), alpha=1 if 2./eventcnt > 1 else 2./eventcnt)

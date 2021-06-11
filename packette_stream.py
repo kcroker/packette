@@ -147,11 +147,17 @@ def streamEventBuilder(property_stash, socketspec, shared_deque, shared_semaphor
             # Unpack it and make a dictionary out of it
             header = dict(zip(field_list, packette_transport.unpack(header)))
 
+            # If this is the first event, set some things about the run (assume that
+            # multiple boards are not spraying here)
             if event is None:
                 # Remember where we are at
                 prev_event_num = header['event_num']
                 event = packetteEvent(header, property_stash)
 
+                # I don't think I can globally mutate this here?
+                # But it doesn't matter.
+                property_stash.board_id = header['board_id']
+                
             # If we've read past the event, return the completed event
             if prev_event_num < header['event_num']:
 
@@ -636,13 +642,13 @@ class packetteRun(object):
         
         while True:
 
-            header = fp.read(packet_transport.size)
-            index += packet_transport.size
+            header = fp.read(packette_transport.size)
+            index += packette_transport.size
 
             # If we successfully read something, but it wasn't long enough to be a header,
             # we probably read EOF.
             if len(header) < packette_transport.size:
-                index -= packet_transport.size
+                index -= packette_transport.size
                 break
             
             # Unpack it and make a dictionary out of it
@@ -659,14 +665,14 @@ class packetteRun(object):
                                 "\tdistinct packette instances on disjoint port ranges")
 
             # This logic is being weird.  Be explicit.
-            if index == packet_transport.size or prev_event_num < header['event_num']:
+            if index == packette_transport.size or prev_event_num < header['event_num']:
 
                 # Sanity check
                 if header['event_num'] in self.offsetTable:
-                    raise Exception("Event number collision!", header['event_num'], (fhandle, index - packet_transport.size))
+                    raise Exception("Event number collision!", header['event_num'], (fhandle, index - packette_transport.size))
                 
                 # Return a tuple with the stream and the byte position within the stream
-                self.offsetTable[header['event_num']] = (fhandle, index - packet_transport.size)
+                self.offsetTable[header['event_num']] = (fhandle, index - packette_transport.size)
 
                 # Do an event-number sorted insertion
                 bisect.insort(self.orderedEventList, header['event_num'])
@@ -698,11 +704,11 @@ class packetteRun(object):
     def setSCAView(self, flag):
 
         # Nop
-        if flag == self.SCAView:
+        if flag == self.property_stash.SCAView:
             return
 
         # Set it
-        self.SCAView = flag
+        self.property_stash.SCAView = flag
 
         # Switch everyone's masks
         # Rebuild everyone's in the event' cache's channel cache!
@@ -752,7 +758,7 @@ class packetteRun(object):
             # Grab a header
             # To make sure we get binary if stdin is given
             # use the underlying buffer
-            header = fp.read(packet_transport.size)
+            header = fp.read(packette_transport.size)
             
             # If we successfully read something, but it wasn't long enough to be a header,
             # we probably read EOF.
@@ -788,7 +794,7 @@ class packetteRun(object):
 
                     # Add a 5 sample symmetric mask around the stop sample
                     maskWidth = 15
-                    if self.SCAView:
+                    if self.property_stash.SCAView:
                         chan.mask(header['drs4_stop'] - maskWidth, header['drs4_stop'] + maskWidth)
                     else:
                         chan.mask(-maskWidth, maskWidth)

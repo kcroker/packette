@@ -5,13 +5,14 @@ import time
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import A2x_common
+import packette_stream as packette
 
 # Make a new tool
-parser = A2x_common.create('Barebones oscilloscope for packette protocol Ultralytics A2x series boards')
-ifc, args = A2x_common.connect(parser)
+# parser = A2x_common.create('Barebones oscilloscope for packette protocol Ultralytics A2x series boards')
+# ifc, args = A2x_common.connect(parser)
 
 # Set it up to read streamed events
-events = packette.packetteRun(args.board, streaming=True)
+events = packette.packetteRun((sys.argv[1], 1338), streaming=True)
 
 fig = plt.figure()
 ax = plt.axes()
@@ -34,10 +35,12 @@ for chan in range(64):
     lines.append(line)
     chans.append(chan)
 
+print("packette_scope.py: Initial lines established", file=sys.stderr)
+
 # We definitely have to hold things fixed, or else the scale will change with every pulse...
 ax.set_ylim(-5000, 5000)
 ax.set_xlim(xmin, xmax)
-ax.set_ylabel("Milivolts")
+ax.set_ylabel("Millivolts")
 ax.set_xlabel("Some unit of time between capacitors")
 ax.legend()
 zeros = np.zeros((1024), dtype=np.int16)

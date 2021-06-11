@@ -71,15 +71,15 @@ empty_payload = np.full([1024], NOT_DATA, dtype=np.int16)
 np.set_printoptions(formatter = {'int' : lambda x : '%5d' % x})
 
 #
-# This managed dequeue implementation for multiprocessing is adapted nearly verbatim from user @martineau
+# This managed dequeue implementation for multiprocessing is adapted from user @martineau
 # https://stackoverflow.com/questions/54511731/working-with-deque-object-across-multiple-processes
-# We only care about append() and popleft().
+# We only care about append() and popleft(), but we want some synchronization
 #
 import collections
-from multiprocessing import Pool
-from multiprocessing.managers import BaseManager
+import multiprocessing
+import multiprocessing.managers
 
-class DequeManager(BaseManager):
+class DequeManager(multiprocessing.managers.SyncManager):
     pass
 
 class DequeProxy(object):
@@ -95,6 +95,128 @@ class DequeProxy(object):
 # Currently only exposes a subset of deque's methods.
 DequeManager.register('DequeProxy', DequeProxy, exposed=['__len__', 'append', 'popleft'])
 
+#
+# This code is similar to loadEvent(), except that it opens the socket
+# and then just does blocking pulls.  No sanity checking is performed here, 
+# so duplicates and corrupted packets will sneak right through, possibly causing
+# crashes or weird behaviour.  Streaming mode should not be used to debug/test firmware
+# packet assembly!
+#
+# Be careful not to mutate anything in self, or else that will probably break
+# the manager.
+#
+def streamEventBuilder(property_stash, socketspec, shared_deque, shared_semaphore):
+
+    # Let the OSError exception propogate upwards if it happens
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    # Listen to the socket (again with OSError exceptions)
+    s.bind(socketspec)
+
+    # For knowing when we cross an event boundary
+    prev_event_num = None
+    event = None
+
+    print("packette_stream.py: subprocess has successfully bound listening socket at", socketspec, file=sys.stderr)
+
+    # Load up 
+    while True:
+
+        try:
+            # Since its a datagram, this will block until an entire packet is pulled
+            # from the underlying OS
+
+            # Grab at most a single Ethernet MTU
+            # (This is not the fastest way to pull data from the OS
+            #  but in streaming mode, we're not going for speed.)
+            stuff = s.recv(2048)
+
+            # Grab a header
+            header = stuff[:packette_transport.size]
+
+            # Advance the stuff
+            stuff = stuff[packette_transport.size:]
+
+            # UDP will always deliver at least one packet
+            # If we read something and its not at least a header length,
+            # it was spurious / malformed.
+            if len(header) < packette_transport.size:
+                # Try again.
+                continue
+
+            # Unpack it and make a dictionary out of it
+            header = dict(zip(field_list, packette_transport.unpack(header)))
+
+            if event is None:
+                # Remember where we are at
+                prev_event_num = header['event_num']
+                event = packetteEvent(header, property_stash)
+
+            # If we've read past the event, return the completed event
+            if prev_event_num < header['event_num']:
+
+                # Now we've loaded all the payloads, build the cache
+                for data in event.channels.values():
+                    data.buildCache()
+
+                # Append it to the queue
+                # NOTE: Absence of "self" here, don't try to modify it through the container class pointer
+                shared_deque.append(event)
+
+                # Notify other processes that there is an event
+                shared_semaphore.release()
+
+                # Get ready for next round
+                prev_event_num = header['event_num']
+                event = packetteEvent(header, property_stash)
+
+            # Try to load in the event payload...
+            # Check to see if this channel is actually in the mask
+            if header['channel_mask'] & (1 << header['channel']) > 0:
+
+                # Populate the channel data from this transport packet
+                chan = event.channels[header['channel']]
+
+                # Is this the first data for this channel? 
+                if len(chan) == 0:
+                    # Make a new block of memory
+                    chan.drs4_stop = header['drs4_stop']
+                    chan.payload = np.zeros(header['total_samples'], dtype=np.int16)
+                    chan.length = header['total_samples']
+
+                    # Add a 5 sample symmetric mask around the stop sample
+                    maskWidth = 15
+                    if property_stash.SCAView:
+                        chan.mask(header['drs4_stop'] - maskWidth, header['drs4_stop'] + maskWidth)
+                    else:
+                        chan.mask(-maskWidth, maskWidth)
+
+                # Since this is UDP semantics, this will succeed unless the packet was somehow malformed...
+                # numpy will silently fail though...
+                capacitors = stuff[:header['num_samples']*SAMPLE_WIDTH]
+
+                # Advance the stuff (technically not necessary)
+                stuff = stuff[header['num_samples']*SAMPLE_WIDTH:]
+
+                # Verify that we *got* this amount
+                if not len(capacitors) == header['num_samples']*SAMPLE_WIDTH:
+
+                    # The slice failed, packet was malformed.
+                    continue
+
+                # Write the payload from this packet
+                chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = np.frombuffer(capacitors, dtype=np.int16)
+
+                # print("\tHEY Got a rel_offset: ", header['rel_offset'], file=sys.stderr)
+                # Debug (set the final relative offset)
+                chan.rel_offset = header['rel_offset']
+        except Exception as e:
+            print("packette_stream.py: Something went wrong on the socket recv(), dying...", file=sys.stderr)
+            print(e)
+            import traceback
+            traceback.print_tb(e.__traceback__)
+            break
+
 # TODO: Implement readahead
         
 # This acts like an array access, except
@@ -103,10 +225,10 @@ DequeManager.register('DequeProxy', DequeProxy, exposed=['__len__', 'append', 'p
 class packetteChannel(object):
 
     # data is a numpy array
-    def __init__(self, drs4_stop, payload, run):
+    def __init__(self, drs4_stop, payload, property_stash):
         self.drs4_stop = drs4_stop
         self.payload = payload
-        self.run = run
+        self.property_stash = property_stash
         self.length = len(payload)
         self.masks = []
 
@@ -153,6 +275,13 @@ class packetteChannel(object):
         else:
             return self.cachedView * x
 
+    def __rmul__(self, x):
+        # Multiply the cachedViews.  Allows to vectorize the channels
+        if isinstance(x, packetteChannel):
+            return self.cachedView * x.cachedView
+        else:
+            return self.cachedView * x
+        
     # Dump the channel stop, mask, and contents
     def __str__(self):
 
@@ -259,7 +388,7 @@ class packetteChannel(object):
         self.cachedView.fill(NOT_DATA)
 
         # Write the payload into the appropriate location into the cache
-        if self.run.SCAView:
+        if self.property_stash.SCAView:
             # Capacitor ordering
 
             # First write up to the end
@@ -285,12 +414,13 @@ class packetteChannel(object):
 # These are backed by numpy arrays, but support indexing beyond the present data
 class packetteEvent(object):
 
-    def __init__(self, header, run):
+    def __init__(self, header, property_stash):
         self.channels = {}
-        self.run = run
+        self.property_stash = property_stash
         self.event_num = header['event_num']
         self.trigger_low = header['trigger_low']
-
+        
+        
         # For every channel thats on in the mask, make a dictionary entry to it
         chan = 0
         chanmask = header['channel_mask'] 
@@ -298,14 +428,14 @@ class packetteEvent(object):
             # print("mask: %x, channel: %d" % (header['channel_mask'], chan))
 
             if chanmask & 0x1:
-                self.channels[chan] = packetteChannel(0, np.empty([0], dtype=np.int16), self.run)
+                self.channels[chan] = packetteChannel(0, np.empty([0], dtype=np.int16), self.property_stash)
 
             # Advance to the next place in the mask
             chanmask >>= 1
             chan += 1
 
     def prettyid(self):
-        return ':'.join(self.run.board_id.hex()[i:i+2] for i in range(0,12,2))
+        return ':'.join(self.property_stash.board_id.hex()[i:i+2] for i in range(0,12,2))
     
     def __str__(self):
         board_id = self.prettyid()
@@ -336,21 +466,23 @@ class packetteEvent(object):
 # Well, I guess a new mode --stream should just emit events
 #
 
+class Blank(object):
+    pass
+
 class packetteRun(object):
 
     # Initialize and load the files
     def __init__(self, fnames, SCAView=False, streaming=False):
 
-        # NOTE: fnames is assumed to be sorted in the order you want to deinterlace in!
-        # Check for stdin
-        self.header_size = packette_transport.size
-        self.board_id = None
         self.orderedEventList = []
         self.offsetTable = OrderedDict()
         self.eventCache = OrderedDict()
 
-        self.SCAView = SCAView
-        
+        # So that we can pass some things with "by reference" semantics
+        self.property_stash = Blank()
+        self.property_stash.SCAView = SCAView
+        self.property_stash.board_id = None
+         
         # We usually expect lists.  If its a one off, check for special conditions.
         # If not, wrap it in a list
         if not isinstance(fnames, list):
@@ -423,11 +555,18 @@ class packetteRun(object):
                     manager.start()
 
                     # Make a member object: 100 events deep, then start discarding them
-                    self.shared_deque = manager.DequeProxy(maxlen=100)
+                    self.shared_deque = manager.DequeProxy([], 100)
 
+                    # Set up semaphore locking so that we can wait until there are events in the deque
+                    self.shared_semaphore = manager.Semaphore(value=0)
+                    
                     # Fork using the multiprocess framework (instead of os.fork())
                     # TIL (derp,) makes a tuple of 1?
-                    p = multiprocessing.Process(target=packetteRun.streamEventBuilder, args=(self, fnames, self.shared_deque))
+                    p = multiprocessing.Process(target=streamEventBuilder,
+                                                args=(self.property_stash,
+                                                      fnames,
+                                                      self.shared_deque,
+                                                      self.shared_semaphore))
                     p.start()
 
                     # Set fnames to empty
@@ -469,124 +608,16 @@ class packetteRun(object):
             self.parseOffsets(fp, fhandle, 0)
             print("packette_stream.py: built event index for %s" % fnames[fhandle], file=sys.stderr)
 
-    #
-    # This code is similar to loadEvent(), except that it opens the socket
-    # and then just does blocking pulls.  No sanity checking is performed here, 
-    # so duplicates and corrupted packets will sneak right through, possibly causing
-    # crashes or weird behaviour.  Streaming mode should not be used to debug/test firmware
-    # packet assembly!
-    #
-    # Be careful not to mutate anything in self, or else that will probably break
-    # the manager.
-    #
-    def streamEventBulilder(self, socketspec, shared_deque):
-
-        # Let the OSError exception propogate upwards if it happens
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            
-        # Listen to the socket (again with OSError exceptions)
-        s.bind(fnames)
-
-        # For knowing when we cross an event boundary
-        prev_event_num = None
-        event = None
-        
-        # Load up 
-        while True:
-
-            try:
-                # Since its a datagram, this will block until an entire packet is pulled
-                # from the underlying OS
-
-                # Grab at most a single Ethernet MTU
-                # (This is not the fastest way to pull data from the OS
-                #  but in streaming mode, we're not going for speed.)
-                stuff = s.recv(1520)
-
-                # Grab a header
-                header = stuff[:self.header_size]
-
-                # Advance the stuff
-                stuff = stuff[self.header_size:]
-                
-                # UDP will always deliver at least one packet
-                # If we read something and its not at least a header length,
-                # it was spurious / malformed.
-                if len(header) < packette_transport.size:
-                    # Try again.
-                    continue
-
-                # Unpack it and make a dictionary out of it
-                header = dict(zip(field_list, packette_transport.unpack(header)))
-
-                if event is None:
-                    # Remember where we are at
-                    prev_event_num = header['event_num']
-                    event = packetteEvent(header, self)
-            
-                # If we've read past the event, return the completed event
-                if prev_event_num < header['event_num']:
-                    
-                    # Now we've loaded all the payloads, build the cache
-                    for data in event.channels.values():
-                        data.buildCache()
-
-                    # Append it to the queue
-                    # NOTE: Absence of "self" here, don't try to modify it through the container class pointer
-                    shared_deque.append(event)
-
-                    # Get ready for next round
-                    prev_event_num = header['event_num']
-                    event = packetteEvent(header, self)
-
-                # Try to load in the event payload...
-                # Check to see if this channel is actually in the mask
-                if header['channel_mask'] & (1 << header['channel']) > 0:
-
-                    # Populate the channel data from this transport packet
-                    chan = event.channels[header['channel']]
-
-                    # Is this the first data for this channel? 
-                    if len(chan) == 0:
-                        # Make a new block of memory
-                        chan.drs4_stop = header['drs4_stop']
-                        chan.payload = np.zeros(header['total_samples'], dtype=np.int16)
-                        chan.length = header['total_samples']
-
-                        # Add a 5 sample symmetric mask around the stop sample
-                        maskWidth = 15
-                        if self.SCAView:
-                            chan.mask(header['drs4_stop'] - maskWidth, header['drs4_stop'] + maskWidth)
-                        else:
-                            chan.mask(-maskWidth, maskWidth)
-
-                    # Since this is UDP semantics, this will succeed unless the packet was somehow malformed...
-                    # numpy will silently fail though...
-                    capacitors = stuff[:header['num_samples']*SAMPLE_WIDTH]
-
-                    # Advance the stuff (technically not necessary)
-                    stuff = stuff[header['num_samples']*SAMPLE_WIDTH:]
-                    
-                    # Verify that we *got* this amount
-                    if not len(capacitors) == header['num_samples']*SAMPLE_WIDTH:
-
-                        # The slice failed, packet was malformed.
-                        continue
-
-                    # Write the payload from this packet
-                    chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = np.frombuffer(capacitors, dtype=np.int16)
-                    
-                    # print("\tHEY Got a rel_offset: ", header['rel_offset'], file=sys.stderr)
-                    # Debug (set the final relative offset)
-                    chan.rel_offset = header['rel_offset']
-            except Exception as e:
-                print("packette_stream.py: Something went wrong on the socket recv(), dying...", file=sys.stderr)
-                print(e)
-                break
-
     # In streaming mode, give a recent event off the deque
     def popEvent(self):
         try:
+            print("packette_stream.py: waiting until I can pop an event", file=sys.stderr)
+
+            # Wait until there is data in the queue
+            self.shared_semaphore.acquire()
+            print("packette_stream.py: event popped!", file=sys.stderr)
+            
+            # Return it
             return self.shared_deque.popleft()
         except AttributeError as e:
             print("packette_stream.py: you do not appear to be in streaming mode", file=sys.stderr)
@@ -605,37 +636,37 @@ class packetteRun(object):
         
         while True:
 
-            header = fp.read(self.header_size)
-            index += self.header_size
+            header = fp.read(packet_transport.size)
+            index += packet_transport.size
 
             # If we successfully read something, but it wasn't long enough to be a header,
             # we probably read EOF.
             if len(header) < packette_transport.size:
-                index -= self.header_size
+                index -= packet_transport.size
                 break
             
             # Unpack it and make a dictionary out of it
             header = dict(zip(field_list, packette_transport.unpack(header)))
 
             # Are we looking at the same board?
-            if self.board_id is None:
-                self.board_id = header['board_id']
-            elif not self.board_id == header['board_id']:
-                print("packette_stream.py: Expecting %s but just read %s..." % (self.board_id, header['board_id']), file=sys.stderr)
+            if self.property_stash.board_id is None:
+                self.property_stash.board_id = header['board_id']
+            elif not self.property_stash.board_id == header['board_id']:
+                print("packette_stream.py: Expecting %s but just read %s..." % (self.property_stash.board_id, header['board_id']), file=sys.stderr)
                 
                 raise Exception("ERROR: Heterogenous board identifiers in multifile event stream.\n " \
                                 "\tOutput from different boards should be directed to\n " \
                                 "\tdistinct packette instances on disjoint port ranges")
 
             # This logic is being weird.  Be explicit.
-            if index == self.header_size or prev_event_num < header['event_num']:
+            if index == packet_transport.size or prev_event_num < header['event_num']:
 
                 # Sanity check
                 if header['event_num'] in self.offsetTable:
-                    raise Exception("Event number collision!", header['event_num'], (fhandle, index - self.header_size))
+                    raise Exception("Event number collision!", header['event_num'], (fhandle, index - packet_transport.size))
                 
                 # Return a tuple with the stream and the byte position within the stream
-                self.offsetTable[header['event_num']] = (fhandle, index - self.header_size)
+                self.offsetTable[header['event_num']] = (fhandle, index - packet_transport.size)
 
                 # Do an event-number sorted insertion
                 bisect.insort(self.orderedEventList, header['event_num'])
@@ -721,7 +752,7 @@ class packetteRun(object):
             # Grab a header
             # To make sure we get binary if stdin is given
             # use the underlying buffer
-            header = fp.read(self.header_size)
+            header = fp.read(packet_transport.size)
             
             # If we successfully read something, but it wasn't long enough to be a header,
             # we probably read EOF.
@@ -735,7 +766,7 @@ class packetteRun(object):
             if event is None:
                 # Remember where we are at
                 prev_event_num = header['event_num']
-                event = packetteEvent(header, self)
+                event = packetteEvent(header, self.property_stash)
             
             # If we've read past the event, return the completed event
             if prev_event_num < header['event_num']:

@@ -20,10 +20,6 @@ parser.add_argument('-W', '--words', metavar='NUM_WORDS', type=int, help='Number
 
 # Connect to the board
 ifc, args = A2x_common.connect(parser)
-
-# Simple sanity check
-if args.r < 0:
-    raise Exception("Rate must be positive")
     
 # Are we using an external trigger?  If so, kill the delay
 if args.external:
@@ -83,4 +79,4 @@ for i in range(0, args.N):
     # print("Trigger %d sent..." % i, file=sys.stderr)
     
     # Sleep for the specified delay
-    time.sleep(1.0/args.r)
+    time.sleep(1.0/args.rate)

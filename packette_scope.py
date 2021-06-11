@@ -21,7 +21,7 @@ xmax = 1040
 xmin = -10
 
 # Shift y-scale to milivolts
-gain = 1./(16*2048)
+gain = 1000./(16*2048)
 
 # Doesnt work with dictionaries?
 lines = []
@@ -29,14 +29,14 @@ lines = []
 # So we go through all possible channels and make lines (for each channel), so they are always present
 # Then we will change the data backing each particular line as things come in.
 for chan in range(64):
-    line = ax.plot(np.linspace(xmin, xmax, 10), [0]*10, linestyle=('solid' if chan < 31 else 'dashed'))[0]
+    line = ax.plot(np.linspace(xmin, xmax, 10), [0]*10, linewidth=1, linestyle=('solid' if chan < 31 else 'dashed'))[0]
     line.set_label('Channel %d' % chan)
     lines.append(line)
 
 print("packette_scope.py: Initial lines established", file=sys.stderr)
 
 # We definitely have to hold things fixed, or else the scale will change with every pulse...
-ax.set_ylim(-0.05, 0.05)
+ax.set_ylim(-50, 50)
 ax.set_xlim(xmin, xmax)
 ax.set_ylabel("Millivolts")
 ax.set_xlabel("Some unit of time between capacitors")
@@ -44,21 +44,30 @@ ax.legend()
 zeros = np.zeros((1024), dtype=np.int16)
 dom = range(1024)
 
+# Title object
+title = plt.title("Waiting for data...")
+
 def animate(i):
 
     # Get one off the deque
-    event = events.popEvent()
+    try:
+        event = events.popEvent()
 
-    print(event)
+        print(event)
+
+        title.set_text("Board %s, Event %d" % (event.prettyid(), event.event_num))
+        for chan,line in enumerate(lines):
+            if chan in event.channels.keys():
+                line.set_data(dom, gain * event.channels[chan])
+            else:
+                line.set_data(dom, zeros)
+                    
+    except IndexError as e:
+        # Empty queue
+        pass
     
-    for chan,line in enumerate(lines):
-        if chan in event.channels.keys():
-            line.set_data(dom, gain * event.channels[chan])
-        #else:
-        #    line.set_data(dom, zeros)
-
     # Returning a global, what could go wrong?
-    return lines#,
+    return lines#, title)#,
 
 ani = animation.FuncAnimation(fig, animate, interval=10, blit=True, save_count=10)
 plt.show()

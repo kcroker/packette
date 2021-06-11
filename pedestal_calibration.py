@@ -65,7 +65,7 @@ def pedestalAccumulator(fname):
             counts[chan] += valid
 
     # We've processed all we could, ship it back
-    return (sums, sumsquares, counts, events.board_id)
+    return (sums, sumsquares, counts, events.property_stash.board_id)
 
 #
 # Entry point for the calibrator

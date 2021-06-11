@@ -170,8 +170,13 @@ def streamEventBuilder(property_stash, socketspec, shared_deque, shared_semaphor
                 shared_deque.append(event)
 
                 # Notify other processes that there is an event
-                shared_semaphore.release()
-
+                try:
+                    shared_semaphore.release()
+                except ValueError:
+                    # This is guarding a deque with maximum length
+                    # If this fails, the queue is full, but this is fine.
+                    pass
+                
                 # Get ready for next round
                 prev_event_num = header['event_num']
                 event = packetteEvent(header, property_stash)
@@ -560,11 +565,14 @@ class packetteRun(object):
                     manager = DequeManager()
                     manager.start()
 
+                    # A magic number hidden in the code!
+                    max_depth = 10
+                    
                     # Make a member object: 100 events deep, then start discarding them
-                    self.shared_deque = manager.DequeProxy([], 100)
+                    self.shared_deque = manager.DequeProxy([], max_depth)
 
                     # Set up semaphore locking so that we can wait until there are events in the deque
-                    self.shared_semaphore = manager.Semaphore(value=0)
+                    self.shared_semaphore = manager.BoundedSemaphore(value=max_depth)
                     
                     # Fork using the multiprocess framework (instead of os.fork())
                     # TIL (derp,) makes a tuple of 1?
@@ -733,7 +741,7 @@ class packetteRun(object):
             return self.eventCache[event_num]
         except KeyError as e:
             # Wasn't in there
-            print("DEBUG (packette_stream.py): cache MISS on event #", event_num)
+            # print("DEBUG (packette_stream.py): cache MISS on event #", event_num, file=sys.stderr)
             pass
 
         
@@ -744,8 +752,7 @@ class packetteRun(object):
         try:
             fp = self.fps[fhandle]
         except IndexError as e:
-            fprintf(stderr,
-                    "packette_stream.py: backing file %s was not loaded?" % self.fnames[fhandle])
+            print("packette_stream.py: backing file %s was not loaded?" % self.fnames[fhandle], file=sys.stderr)
                 
         # Go there
         fp.seek(offset)

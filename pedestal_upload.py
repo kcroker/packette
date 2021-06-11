@@ -25,7 +25,7 @@ print("Connection to EEVEE @ %s established." % argv[2])
 # We have 1024 pedestals per channel
 # Each register set is a 32bit address and 32bit word
 # 
-maxSetsPerPacket = 1
+maxSetsPerPacket = 32
 
 count = 0
 tmp = {}
@@ -60,35 +60,37 @@ for chan in aPedestal.mean:
             # Reset count
             count = 0
 
-for chan in aPedestal.mean:
-    for i, ped in enumerate(aPedestal.mean[chan]):
-        # Truncate it
-        try:
-            ped = (int(ped) & 0xFFFF) >> 4
-        except ValueError:
-            print("WARNING bad pedestal, channel %d capacitor %d" % (chan, i))
-            continue
+# Dirty HAX for broken firmware pedestal 0 in FW < 109
+
+# for chan in aPedestal.mean:
+#     for i, ped in enumerate(aPedestal.mean[chan]):
+#         # Truncate it
+#         try:
+#             ped = (int(ped) & 0xFFFF) >> 4
+#         except ValueError:
+#             print("WARNING bad pedestal, channel %d capacitor %d" % (chan, i))
+#             continue
         
-        # Multiplication by 4 because 32bits per address
-        addr = ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
+#         # Multiplication by 4 because 32bits per address
+#         addr = ADDR_PEDMEM_OFFSET + (chan << 12) + i*4
                 
-        # This method guarantees that only one 'register write'
-        # operation is required to set all these registers
-        tmp[addr] = ped if ped >= 0 else ped + 0xFFF + 1
-        count += 1 
+#         # This method guarantees that only one 'register write'
+#         # operation is required to set all these registers
+#         tmp[addr] = ped if ped >= 0 else ped + 0xFFF + 1
+#         count += 1 
 
-        if count == maxSetsPerPacket:
-            # Execute the transaction (now clears transactions)
-            board.poke(tmp, silent=True)
-            board.transact()
+#         if count == maxSetsPerPacket:
+#             # Execute the transaction (now clears transactions)
+#             board.poke(tmp, silent=True)
+#             board.transact()
             
-            # Clear it
-            tmp = {}
+#             # Clear it
+#             tmp = {}
         
-            # Reset count
-            count = 0
+#             # Reset count
+#             count = 0
 
-        break;
+#         break;
     
 # Was there any leftover?
 if count > 0 and count < maxSetsPerPacket:

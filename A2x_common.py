@@ -174,6 +174,64 @@ def connect(parser):
     return (ifc, args)
 
 #
+# Strip mappings to channels.
+# Strips are counted from the SFP cage regarded as the upper left,
+# from the back of the tile.  Lowest strip is left-most. Strips are 1 indexed,
+# because Jesus hates your freedoms.
+#
+
+strips = {  28  : (0,62),
+            27  : (1,61),
+            26  : (2,60),
+            25  : (3,59),
+            24  : (4,58),
+            23  : (5,57),
+            22  : (6,56),
+           
+            21  : (8,54),
+            20  : (9,53),
+            19  : (10, 52),
+            18  : (11, 51),
+            17  : (12, 50),
+            16  : (13, 49),
+            15  : (14, 48),
+           
+            14  : (16, 46),
+            13  : (17, 45),
+            12  : (18, 44),
+            11  : (19, 43),
+            10  : (20, 42),
+            9  : (21, 41),
+            8  : (22, 40),
+        
+            7  : (24, 38),
+            6  : (25, 37),
+            5  : (26, 36),
+            4  : (27, 35),
+            3  : (28, 34),
+            2  : (29, 33),
+            1  : (30, 32)}
+
+inverse_strips = { v : k for k,v in strips.items() }
+
+exploded_inverse_strips = {}
+for key,val in strips.items():
+    l,r = val
+    exploded_inverse_strips[l] = key
+    exploded_inverse_strips[r] = key
+
+calibrations = { 1 : (7,),
+                 2 : (15,),
+                 3 : (23,),
+                 4 : (31,),
+                 5 : (39,),
+                 6 : (47,),
+                 7 : (55,),
+                 8 : (63,) }
+
+inverse_calibrations = { v : k for k,v in calibrations.items() }                 
+                 
+#
 # Do a block write of EEVEE register space, using
 # fast register trasnactions
 #

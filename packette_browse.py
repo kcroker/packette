@@ -8,45 +8,13 @@ import argparse
 import numpy as np
 import os
 import readline
+import A2x_common
 
 parser = argparse.ArgumentParser(description='Realtime packette data inspector. Can browse existing packette data files or (slowly) capture and new, single-port, streams')
 parser.add_argument('--capture', action='store_true', help='Interpret arguments as an IP address and UDP port to listen at')
 parser.add_argument('fnames', type=str, nargs='+', help='Files to load or IP address and port')
 
 args = parser.parse_args()
-
-# Be dumb.
-strips = {  28  : (0,62),
-            27  : (1,61),
-            26  : (2,60),
-            25  : (3,59),
-            24  : (4,58),
-            23  : (5,57),
-            22  : (6,56),
-           
-            21  : (8,54),
-            20  : (9,53),
-            19  : (10, 52),
-            18  : (11, 51),
-            17  : (12, 50),
-            16  : (13, 49),
-            15  : (14, 48),
-           
-            14  : (16, 46),
-            13  : (17, 45),
-            12  : (18, 44),
-            11  : (19, 43),
-            10  : (20, 42),
-            9  : (21, 41),
-            8  : (22, 40),
-        
-            7  : (24, 38),
-            6  : (25, 37),
-            5  : (26, 36),
-            4  : (27, 35),
-            3  : (28, 34),
-            2  : (29, 33),
-            1  : (30, 32)}
 
 targetport = None
 capture = args.capture
@@ -199,7 +167,7 @@ def parse_speclist(speclist):
                 print("Matched", m)
                 
                 # Get strip tuples of channels
-                tuples = [strips[s] for s in parse_speclist(m)]
+                tuples = [A2x_common.strips[s] for s in parse_speclist(m)]
 
                 # Inefficient comparison ::puke::
                 for tup in tuples:

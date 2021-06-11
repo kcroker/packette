@@ -18,7 +18,7 @@ parser = A2x_common.create('Generic configuration tool for Ultralytics A2x serie
 parser.add_argument('-R', '--register', dest='registers', metavar='REGISTER', type=str, nargs=1, action='append', help='Peek and document the given register')
 parser.add_argument('-W', '--words', metavar='NUM_WORDS', type=int, help='Number of samples to report after DRS4 stop. (must be power of 2 for packette)')
 
-parser.add_argument('-T', '--threshold', metavar='THRESHOLD', action='store_true', help='Intake channel thresholds for zero suppression from stdin, with ASCII, line by line')
+parser.add_argument('-T', '--threshold', action='store_true', help='Intake channel thresholds for zero suppression from stdin, with ASCII, line by line')
 
 # Connect to the board
 ifc, args = A2x_common.connect(parser)

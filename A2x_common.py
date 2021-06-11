@@ -255,7 +255,7 @@ def blockread(board, baseaddr, length, chunksize=32, cast=np.int16):
 # (use it with vectorized numpy types)
 #
 def mVtoADC(mV):
-    return (mV / 1000.) * 2048
+    return int((mV / 1000.) * 2048)
     
 
 #
@@ -264,3 +264,12 @@ def mVtoADC(mV):
 #
 def ADCtomV(adc):
     return adc * 1000. / 2048
+
+def chans2bitmask(chans):
+
+    mask = 0x0
+
+    for chan in chans:
+        mask |= 1 << chan
+
+    return mask

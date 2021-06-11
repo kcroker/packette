@@ -69,6 +69,7 @@ def animate(i):
     # Returning a global, what could go wrong?
     return lines#, title)#,
 
-ani = animation.FuncAnimation(fig, animate, interval=10, blit=True, save_count=10)
+# Go as fast as possible, what could go wrong?
+ani = animation.FuncAnimation(fig, animate, interval=0, blit=True, save_count=10)
 plt.show()
 

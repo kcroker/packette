@@ -5,6 +5,7 @@ import multiprocessing
 from os import kill,environ
 from signal import SIGINT
 import sys
+import numpy as np
 
 # Do not ask me why this needs to be included now...
 sys.path.append("./eevee")
@@ -173,10 +174,93 @@ def connect(parser):
     return (ifc, args)
 
 #
+# Do a block write of EEVEE register space, using
+# fast register trasnactions
 #
-# 
+# Eventually, this should be replaced with some sort bulk write
+# from a base pointer in C, with a different type of EEVEE transaction
 #
-def disableTCAL(ifc):
+def blockwrite(board, baseaddr, data, chunksize=32):
 
-    # Disable OUT4 (TCAL_N1)
-    ifc.brd.pokenow(0x1000 | (0x3 << 2), 0x10)
+    # Start at the beginning
+    offset = 0
+    
+    while offset < len(data):
+
+        # Reset it
+        act = {}
+        count = 0
+        
+        # Build up a chunk
+        while count < chunksize:
+            act[baseaddr + offset*4] = data[offset]
+            offset += 1
+            count += 1
+
+            # Check for end of data
+            if offset == len(data):
+                break
+    
+        # Write out the chunk, or any remainder
+        board.poke(act, silent=True)
+        board.transact()
+
+#
+# NOTE: length is not byte length, its number of 32-bit addresses to 
+#       qwerty
+#
+def blockread(board, baseaddr, length, chunksize=32, cast=np.int16):
+    # Start at the beginning
+    offset = 0
+
+    results = {}
+    
+    while offset < length:
+
+        # Reset it
+        act = {}
+        count = 0
+        
+        # Build up a chunk
+        while count < chunksize:
+            act[baseaddr + offset*4] = 0x0
+            offset += 1
+            count += 1
+
+            # Check for end of data
+            if offset == length:
+                break
+    
+        # Read out the chunk, or any remainder
+        board.peek(act)
+
+        # Zero index because there was a single transaction
+        # .data because this attribute contains the reconstructed register dictionary
+        regdict = board.transact()[0].data
+        results = {**results, **regdict}
+
+    # Now assemble the resulting dictionary back into a contiguous numpy type
+    datablock = np.zeros((length), dtype=cast)
+
+    offset = 0
+    while offset < length:
+        datablock[offset] = results[baseaddr + offset*4]
+        offset += 1
+
+    # Return the datablock
+    return datablock
+    
+#
+# Convenience coverter from signed millivolts to natural ADC units
+# (use it with vectorized numpy types)
+#
+def mVtoADC(mV):
+    return (mV / 1000.) * 2048
+    
+
+#
+# Convenience converter from natural ADC units to millivolts
+# (use it with vectorized numpy types)
+#
+def ADCtomV(adc):
+    return adc * 1000. / 2048

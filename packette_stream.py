@@ -70,6 +70,31 @@ empty_payload = np.full([1024], NOT_DATA, dtype=np.int16)
 # Make it the pretty
 np.set_printoptions(formatter = {'int' : lambda x : '%5d' % x})
 
+#
+# This managed dequeue implementation for multiprocessing is adapted nearly verbatim from user @martineau
+# https://stackoverflow.com/questions/54511731/working-with-deque-object-across-multiple-processes
+# We only care about append() and popleft().
+#
+import collections
+from multiprocessing import Pool
+from multiprocessing.managers import BaseManager
+
+class DequeManager(BaseManager):
+    pass
+
+class DequeProxy(object):
+    def __init__(self, *args):
+        self.deque = collections.deque(*args)
+    def __len__(self):
+        return self.deque.__len__()
+    def append(self, x):
+        self.deque.append(x)
+    def popleft(self):
+        return self.deque.popleft()
+
+# Currently only exposes a subset of deque's methods.
+DequeManager.register('DequeProxy', DequeProxy, exposed=['__len__', 'append', 'popleft'])
+
 # TODO: Implement readahead
         
 # This acts like an array access, except
@@ -303,10 +328,18 @@ class packetteEvent(object):
         msg += drsstr
         return msg
 
+#
+# The idea is to watch a socket (destructively) or a file descriptor for new data
+# and to parse it as event data.  And to support non-file backed operation on the socket.
+# There you just receive data into a large buffer 
+#
+# Well, I guess a new mode --stream should just emit events
+#
+
 class packetteRun(object):
 
     # Initialize and load the files
-    def __init__(self, fnames, SCAView=False):
+    def __init__(self, fnames, SCAView=False, streaming=False):
 
         # NOTE: fnames is assumed to be sorted in the order you want to deinterlace in!
         # Check for stdin
@@ -332,53 +365,75 @@ class packetteRun(object):
                 and isinstance(fnames[0], str)
                 and isinstance(fnames[1], int)):
 
-                # (Parent will not use s or tmpfile)
-                
-                # Let the OSError exception propogate upwards if it happens
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                # We want to record a transcript and not parse on the fly
+                if not streaming:
 
-                # Timeout after 1 second
-                s.settimeout(1.0)
-                
-                # Listen to the socket
-                s.bind(fnames)
+                    # (Parent will not use s or tmpfile)
 
-                # Socket is up, create the filename for the backing file
-                # and open it (so we make sure not to race here)
-                fnames = ['packetteRun_%s_%d_%f.dat' % (fnames[0], fnames[1], time.time())]
+                    # Let the OSError exception propogate upwards if it happens
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-                # Open the destination file as unbuffered, so each time we write
-                # the actual data goes into the file
-                tmpfile = open(fnames[0], 'wb', 0)
+                    # Timeout after 1 second
+                    s.settimeout(1.0)
 
-                # Stash parent pid
-                ppid = os.getpid()
-                
-                # Now fork
-                pid = os.fork()
-                if not pid:
-                    # We are childlike, dump everything into the file
-                    try:
-                        while True:                            
-                            try:
-                                # Since its a datagram, this will block until timeout or an entire packet is pulled
-                                # from the underlying buffers
+                    # Listen to the socket
+                    s.bind(fnames)
 
-                                # XXX DOES NOT PERFORM SEQUENCE NUMBER CHECKS, NEEDS TO
-                                stuff = s.recv(4096)
-                                tmpfile.write(stuff)
-                            except socket.timeout as e:
-                                # If the parent has died, we should die too
-                                if not os.getppid() == ppid:
-                                    exit(0)
-                    except OSError as e:
-                        print("Data capture process encountered trouble: ", e)
-                    finally:
-                        # Always close out the backing file
-                        tmpfile.close()
+                    # Socket is up, create the filename for the backing file
+                    # and open it (so we make sure not to race here)
+                    fnames = ['packetteRun_%s_%d_%f.dat' % (fnames[0], fnames[1], time.time())]
+
+                    # Open the destination file as unbuffered, so each time we write
+                    # the actual data goes into the file
+                    tmpfile = open(fnames[0], 'wb', 0)
+
+                    # Stash parent pid
+                    ppid = os.getpid()
+
+                    # Now fork
+                    pid = os.fork()
+                    if not pid:
+                        # We are childlike, dump everything into the file
+                        try:
+                            while True:                            
+                                try:
+                                    # Since its a datagram, this will block until timeout or an entire packet is pulled
+                                    # from the underlying buffers
+
+                                    # XXX DOES NOT PERFORM SEQUENCE NUMBER CHECKS, NEEDS TO
+                                    stuff = s.recv(4096)
+                                    tmpfile.write(stuff)
+                                except socket.timeout as e:
+                                    # If the parent has died, we should die too
+                                    if not os.getppid() == ppid:
+                                        exit(0)
+                        except OSError as e:
+                            print("Data capture process encountered trouble: ", e)
+                        finally:
+                            # Always close out the backing file
+                            tmpfile.close()
+                    else:
+                        # We are the parent
+                        print("Successfully forked data capture PID %d, writing to %s..." % (pid, fnames[0]), file=sys.stderr)
                 else:
-                    # We are the parent
-                    print("Successfully forked data capture PID %d, writing to %s..." % (pid, fnames[0]), file=sys.stderr)
+                    # We want streaming, spawn a process to listen and parse
+                    print("packette_stream.py: streaming mode requested.  Events will be placed on a managed deque and can be acquired with eventPop()", file=sys.stderr)
+                    
+                    manager = DequeManager()
+                    manager.start()
+
+                    # Make a member object: 100 events deep, then start discarding them
+                    self.shared_deque = manager.DequeProxy(maxlen=100)
+
+                    # Fork using the multiprocess framework (instead of os.fork())
+                    # TIL (derp,) makes a tuple of 1?
+                    p = multiprocessing.Process(target=packetteRun.streamEventBuilder, args=(self, fnames, self.shared_deque))
+                    p.start()
+
+                    # Set fnames to empty
+                    fnames = []
+
+                    # None of the file-backed commands will work properly at this point ;)
             else:
                 # Wrap it in a list
                 fnames = [fnames]
@@ -414,6 +469,128 @@ class packetteRun(object):
             self.parseOffsets(fp, fhandle, 0)
             print("packette_stream.py: built event index for %s" % fnames[fhandle], file=sys.stderr)
 
+    #
+    # This code is similar to loadEvent(), except that it opens the socket
+    # and then just does blocking pulls.  No sanity checking is performed here, 
+    # so duplicates and corrupted packets will sneak right through, possibly causing
+    # crashes or weird behaviour.  Streaming mode should not be used to debug/test firmware
+    # packet assembly!
+    #
+    # Be careful not to mutate anything in self, or else that will probably break
+    # the manager.
+    #
+    def streamEventBulilder(self, socketspec, shared_deque):
+
+        # Let the OSError exception propogate upwards if it happens
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            
+        # Listen to the socket (again with OSError exceptions)
+        s.bind(fnames)
+
+        # For knowing when we cross an event boundary
+        prev_event_num = None
+        event = None
+        
+        # Load up 
+        while True:
+
+            try:
+                # Since its a datagram, this will block until an entire packet is pulled
+                # from the underlying OS
+
+                # Grab at most a single Ethernet MTU
+                # (This is not the fastest way to pull data from the OS
+                #  but in streaming mode, we're not going for speed.)
+                stuff = s.recv(1520)
+
+                # Grab a header
+                header = stuff[:self.header_size]
+
+                # Advance the stuff
+                stuff = stuff[self.header_size:]
+                
+                # UDP will always deliver at least one packet
+                # If we read something and its not at least a header length,
+                # it was spurious / malformed.
+                if len(header) < packette_transport.size:
+                    # Try again.
+                    continue
+
+                # Unpack it and make a dictionary out of it
+                header = dict(zip(field_list, packette_transport.unpack(header)))
+
+                if event is None:
+                    # Remember where we are at
+                    prev_event_num = header['event_num']
+                    event = packetteEvent(header, self)
+            
+                # If we've read past the event, return the completed event
+                if prev_event_num < header['event_num']:
+                    
+                    # Now we've loaded all the payloads, build the cache
+                    for data in event.channels.values():
+                        data.buildCache()
+
+                    # Append it to the queue
+                    # NOTE: Absence of "self" here, don't try to modify it through the container class pointer
+                    shared_deque.append(event)
+
+                    # Get ready for next round
+                    prev_event_num = header['event_num']
+                    event = packetteEvent(header, self)
+
+                # Try to load in the event payload...
+                # Check to see if this channel is actually in the mask
+                if header['channel_mask'] & (1 << header['channel']) > 0:
+
+                    # Populate the channel data from this transport packet
+                    chan = event.channels[header['channel']]
+
+                    # Is this the first data for this channel? 
+                    if len(chan) == 0:
+                        # Make a new block of memory
+                        chan.drs4_stop = header['drs4_stop']
+                        chan.payload = np.zeros(header['total_samples'], dtype=np.int16)
+                        chan.length = header['total_samples']
+
+                        # Add a 5 sample symmetric mask around the stop sample
+                        maskWidth = 15
+                        if self.SCAView:
+                            chan.mask(header['drs4_stop'] - maskWidth, header['drs4_stop'] + maskWidth)
+                        else:
+                            chan.mask(-maskWidth, maskWidth)
+
+                    # Since this is UDP semantics, this will succeed unless the packet was somehow malformed...
+                    # numpy will silently fail though...
+                    capacitors = stuff[:header['num_samples']*SAMPLE_WIDTH]
+
+                    # Advance the stuff (technically not necessary)
+                    stuff = stuff[header['num_samples']*SAMPLE_WIDTH:]
+                    
+                    # Verify that we *got* this amount
+                    if not len(capacitors) == header['num_samples']*SAMPLE_WIDTH:
+
+                        # The slice failed, packet was malformed.
+                        continue
+
+                    # Write the payload from this packet
+                    chan.payload[header['rel_offset']:header['rel_offset'] + header['num_samples']] = np.frombuffer(capacitors, dtype=np.int16)
+                    
+                    # print("\tHEY Got a rel_offset: ", header['rel_offset'], file=sys.stderr)
+                    # Debug (set the final relative offset)
+                    chan.rel_offset = header['rel_offset']
+            except Exception as e:
+                print("packette_stream.py: Something went wrong on the socket recv(), dying...", file=sys.stderr)
+                print(e)
+                break
+
+    # In streaming mode, give a recent event off the deque
+    def popEvent(self):
+        try:
+            return self.shared_deque.popleft()
+        except AttributeError as e:
+            print("packette_stream.py: you do not appear to be in streaming mode", file=sys.stderr)
+            
     def parseOffsets(self, fp, fhandle, index):
         # This will index event byte boundaries in the underlying stream
         # Lookups can then be done by seeking in the underlying stream
@@ -510,7 +687,8 @@ class packetteRun(object):
                 chan.buildCache()
 
         # (subsequently added events will automatically be channel cached correctly)
-        
+            
+    # Load events from files
     def loadEvent(self, event_num):
 
         # First check cache

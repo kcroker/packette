@@ -89,6 +89,11 @@ def connect(parser):
     # Parse the arguments
     args = parser.parse_args()
 
+    # Sanity checks
+    if args.rate <= 0:
+        print("Given rate", args.rate, "is non-sensical.")
+        exit(1)
+
     # Connect to the board
     ifc = lappdIfc.lappdInterface(args.board, udpsport=args.udpsport)
 

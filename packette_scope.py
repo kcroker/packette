@@ -13,16 +13,17 @@ from collections import deque
 # ifc, args = A2x_common.connect(parser)
 
 # Set it up to read streamed events
-events = packette.packetteRun((sys.argv[1], 1338), streaming=True)
+events = packette.packetteRun((sys.argv[1], 5683), streaming=True)
 
 # Matplotlib stuff
 plt.style.use('dark_background')
 
 # Set up figures for oscilliscope and channel hit rate heat map
 fig, ax = plt.subplots(2,1)
+fig.subplots_adjust(hspace=0,wspace=0)
 
-scope = ax[0,0]
-hitrate = ax[1,0]
+scope = ax[0]
+hitmap = ax[1]
 
 xmax = 1040
 xmin = -10
@@ -43,17 +44,49 @@ for chan in range(64):
 print("packette_scope.py: Initial lines established", file=sys.stderr)
 
 # We definitely have to hold things fixed, or else the scale will change with every pulse...
-scope.set_ylim(-50, 50)
+scope.set_ylim(-30, 60)
 scope.set_xlim(xmin, xmax)
 scope.set_ylabel("Millivolts")
 scope.set_xlabel("Some unit of time between capacitors")
-scope.legend()
+scope.grid('on', linestyle='--', linewidth=1, color='gray')
+
 zeros = np.zeros((1024), dtype=np.int16)
-dom = range(1024)
+dom = np.linspace(0, 1023, 1024) 
 
 # Title objects
-scope_title = scope.title("Waiting for data...")
-hitrate_title = hitrate.title("Channel hitrates over past 100 events (relative)")
+scope_title = scope.set_title("Waiting for data...")
+
+# Strip labels on channels
+bottom_labels = [(x, A2x_common.strips[x+1][1]) for x in range(28)]
+top_labels = [(x, A2x_common.strips[x+1][0]) for x in range(28)]
+
+# Calibration labels
+bottom_labels += [(x+29, A2x_common.calibrations[4+x+1]) for x in range(4)] 
+top_labels += [(x+29, A2x_common.calibrations[x+1]) for x in range(4)]
+
+hitmap.set_xticks([x[0] for x in bottom_labels])
+hitmap.set_xticklabels([x[1] for x in bottom_labels])
+
+# Cheat with minor ticks (all me buddy!)
+hitmap.tick_params(axis='x', which='minor', direction='out', bottom=False, labelbottom=False, top=True, labeltop=True)
+hitmap.set_xticks([x[0] for x in top_labels], minor=True)
+hitmap.set_xticklabels([x[1] for x in top_labels], minor=True)
+
+hitmap.set_yticks([0,1])
+hitmap.set_yticklabels(['Top row (SFP cage)', 'Bottom row'])
+
+
+# Hide the ugly border
+hitmap.spines['top'].set_visible(False)
+hitmap.spines['right'].set_visible(False)
+hitmap.spines['bottom'].set_visible(False)
+hitmap.spines['left'].set_visible(False)
+
+#hitmap.set_xticks([x[0] for x in bottom_labels])
+#hitmap.set_xticklabels([x[1] for x in bottom_labels])
+
+hitmap.yaxis.set_label_position("right")
+hitmap.set_ylabel("Calibration")
 
 # Channel hit list deques
 temp_accumulators = []
@@ -66,7 +99,13 @@ temp_accumulators = []
 temps = np.zeros((2,28+1+4), dtype=np.uint8)
 
 # Get the artist object
-heat = hitrate.imshow(temps)
+heat = hitmap.imshow(temps, vmin=0, vmax=32)
+
+# Mask out the separation between strips and calibration channels
+import matplotlib.patches as patches
+
+rect = patches.Rectangle((27.5, -0.5), 1, 2, linewidth=0, edgecolor='black', facecolor='black', zorder=3, fill=True)
+hitmap.add_patch(rect)
 
 # Increments the right spot in the imshow matrices
 # given the channel number
@@ -91,7 +130,7 @@ def temptag(chan, incr):
         if chan < 32:
             temps[(0, 29 + cal-1)] += incr
         else:
-            temps[(1, 29 + cal-1)] += incr
+            temps[(1, 29 + (cal-4)-1)] += incr
     
 for i in range(64):
     temp_accumulators.append(deque())
@@ -114,7 +153,7 @@ def animate(i):
                 temp_accumulators[chan].append(0)
 
             # Pop if necessary
-            if len(temp_accumulators[chan]) > 255:
+            if len(temp_accumulators[chan]) > 32:
                 temptag(chan, -temp_accumulators[chan].popleft())
             
         # Set the title 
@@ -128,14 +167,17 @@ def animate(i):
                 line.set_data(dom, zeros)
 
         # Update the heatmap
-        heat.set_data(temps)
+        heat.set_array(temps)
         
     except IndexError as e:
+        import traceback
+        print(e)
+        traceback.print_tb(e.__traceback__)
         # Empty queue
         pass
     
     # Return all things to be updated
-    return (*lines, scope_title, heat)
+    return (*lines, scope_title, heat, rect)
 
 # Go as fast as possible, what could go wrong?
 ani = animation.FuncAnimation(fig, animate, interval=0, blit=True, save_count=10)

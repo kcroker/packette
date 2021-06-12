@@ -220,14 +220,14 @@ for key,val in strips.items():
     exploded_inverse_strips[l] = key
     exploded_inverse_strips[r] = key
 
-calibrations = { 1 : (7,),
-                 2 : (15,),
-                 3 : (23,),
-                 4 : (31,),
-                 5 : (39,),
-                 6 : (47,),
-                 7 : (55,),
-                 8 : (63,) }
+calibrations = { 1 : 7,
+                 2 : 15,
+                 3 : 23,
+                 4 : 31,
+                 5 : 39,
+                 6 : 47,
+                 7 : 55,
+                 8 : 63 }
 
 inverse_calibrations = { v : k for k,v in calibrations.items() }                 
                  

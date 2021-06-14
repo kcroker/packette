@@ -7,23 +7,31 @@ import matplotlib.animation as animation
 import A2x_common
 import packette_stream as packette
 from collections import deque
+import argparse
 
 # Make a new tool
-# parser = A2x_common.create('Barebones oscilloscope for packette protocol Ultralytics A2x series boards')
-# ifc, args = A2x_common.connect(parser)
+parser = argparse.ArgumentParser(description='Oscilliscope and hitrate heatmap for packette protocol devices')
+parser.add_argument('--port', help='Receive packette daragrams here', type=int, default=1338)
+parser.add_argument('address', metavar='ADDRESS', help='Listen on this IP address for datagrams')
+
+args = parser.parse_args()
 
 # Set it up to read streamed events
-events = packette.packetteRun((sys.argv[1], 5683), streaming=True)
+events = packette.packetteRun((args.address, args.port), streaming=True)
 
 # Matplotlib stuff
 plt.style.use('dark_background')
 
 # Set up figures for oscilliscope and channel hit rate heat map
-fig, ax = plt.subplots(2,1)
+fig, ax = plt.subplots(3,1)
 fig.subplots_adjust(hspace=0,wspace=0)
 
 scope = ax[0]
 hitmap = ax[1]
+info = ax[2]
+
+# Remove the bs from the info
+info.axis('off')
 
 xmax = 1040
 xmin = -10
@@ -54,9 +62,7 @@ zeros = np.zeros((1024), dtype=np.int16)
 dom = np.linspace(0, 1023, 1024) 
 
 # Title objects
-scope_title = scope.title
-
-scope_title.set_text("Waiting for data...")
+scope_title = info.text(0,0, "Waiting for data...")
 
 # Strip labels on channels
 bottom_labels = [(x, A2x_common.strips[x+1][1]) for x in range(28)]

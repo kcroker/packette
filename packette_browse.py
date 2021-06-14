@@ -8,7 +8,7 @@ import argparse
 import numpy as np
 import os
 import readline
-import A2x_common
+from A2x_common import parse_speclist
 
 parser = argparse.ArgumentParser(description='Realtime packette data inspector. Can browse existing packette data files or (slowly) capture and new, single-port, streams')
 parser.add_argument('--capture', action='store_true', help='Interpret arguments as an IP address and UDP port to listen at')
@@ -129,82 +129,6 @@ def switch_channel(args):
 
     else:
         print("Channel %d not present in this event" % var)
-
-import re
-def parse_speclist(speclist):
-
-    # Speclist looks like
-    # [!]n1, [!]n2-n3, [!]s(x), [!]s(x)-s(y)...
-
-    # Make a regex for matching strip
-    p = re.compile(r's\((.*)\)')
-    
-    # Received
-    print("Received: ", speclist)
-    
-    # Get the individual specs
-    specs = [x.strip() for x in speclist.split(',')]
-
-    exclusions = []
-    inclusions = []
-    
-    for spec in specs:
-
-        # See if they are negated
-        negated = False
-        if spec[0] == '!':
-            negated = True
-            spec = spec[1:]
-            
-        try:
-            # First see if its a tile strip
-            m = p.match(spec)
-            if not m is None:
-
-                # Extract the strip number as a string
-                m = m.group(1)
-
-                print("Matched", m)
-                
-                # Get strip tuples of channels
-                tuples = [A2x_common.strips[s] for s in parse_speclist(m)]
-
-                # Inefficient comparison ::puke::
-                for tup in tuples:
-                    if negated:
-                        exclusions += tup
-                    else:
-                        inclusions += tup 
-            else:        
-                # Extract the bounds
-                bounds = [int(x) for x in spec.split('-')]
-
-                # Double up if necessary
-                if len(bounds) < 2:
-                    bounds.append(bounds[0])
-                
-                # Flip the if reversed
-                if bounds[0] > bounds[1]:
-                    tmp = bounds[1]
-                    bounds[1] = bounds[0]
-                    bounds[0] = tmp
-
-                # Add it to the appropriate list
-                # Interpret bounds as inclusive
-                if negated:
-                    exclusions += range(bounds[0], bounds[1]+1)
-                else:
-                    inclusions += range(bounds[0], bounds[1]+1)
-
-        except ValueError as e:
-            print("Did not understand %s, skipping..." % spec)
-
-
-    print("Include: ", inclusions)
-    print("Exclude: ", exclusions)
-    
-    # Filter out the exclusions from the inclusions
-    return [x for x in inclusions if x not in exclusions]
                                 
 def graph(arg):
 
@@ -245,7 +169,7 @@ def graph(arg):
             for n in chanlist:
                 try:
                     graphs.append((events[run[eventpos]].channels[n], eventpos, n))
-                except (KeyError, StopIteration) as e:
+                except (KeyError, StopIteration, IndexError) as e:
                     print("Missing Event %d, Channel %d?" % (eventpos,n))
 
         # Event count for alphap

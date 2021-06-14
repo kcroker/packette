@@ -6,6 +6,7 @@ from os import kill,environ
 from signal import SIGINT
 import sys
 import numpy as np
+import re
 
 # Do not ask me why this needs to be included now...
 sys.path.append("./eevee")
@@ -22,7 +23,6 @@ def create(leader):
     
     parser.add_argument('board', metavar='IP_ADDRESS', type=str, help='IP address of the target board')
 
-    parser.add_argument('-s', '--subtract', metavar='PEDESTAL_FILE', type=str, help='Upload a pedestal for firmware subtraction')
     parser.add_argument('-a', '--aim', metavar='UDP_PORT', type=int, help='Aim the board at this port on this machine.')
     parser.add_argument('-c', '--channels', metavar='CHANNELS', help="Explicitly force a hex channel mask. (Persistent)")
     parser.add_argument('-w', '--wait', metavar='WAIT', type=int, help="Adjust delay between receipt of soft/hard trigger and DRS4 sampling stop. (Persistant)")
@@ -39,6 +39,9 @@ def create(leader):
     parser.add_argument('-z', '--zsuppress', type=int, help='Adjust firmware zero channel suppression (odd is on)')
     parser.add_argument('-O', '--oscillator', type=int, help='Adjust internal 100Mhz oscillator on all TCAL lines (odd is on)')
     parser.add_argument('--adcmode', type=str, help='Put the ADC into alternate modes for debugging')
+
+    parser.add_argument('--andtrigger', help="Specific necessary channels over threshold for a trigger")
+    parser.add_argument('--ortrigger', help="Any of these channels over threshold will cause a trigger")
     
     # At these values, unbuffered TCAL does not
     # have the periodic pulse artifact (@ CMOFS 0.8)
@@ -148,10 +151,34 @@ def connect(parser):
                 
     # Set the channels?
     if not args.channels is None:
-        args.channels = int(args.channels, base=16)
+        try:
+            args.channels = int(args.channels, base=16)
+        except ValueError as e:
+            # Allow the same channel specifications as the browser
+            args.channels = chans2bitmask(parse_speclist(args.channels))
 
-        ifc.brd.pokenow(0x670, args.channels & 0x00000000FFFFFFFF)
-        ifc.brd.pokenow(0x674, (args.channels & 0xFFFFFFFF00000000) >> 32)
+        # Write it out all at once
+        writemask(lappdIfc.ADCCHANMASK_0, args.channels)
+
+    # Set the and mask?
+    if not args.andtrigger is None:
+        try:
+            args.andtrigger = int(args.andtrigger, base=16)
+        except ValueError as e:
+            args.andtrigger = chans2bitmask(parse_speclist(args.andtrigger))
+
+        # Write it out
+        writemask(lappdIfc.ZERSUPMASKAND_0, args.andtrigger)
+
+    # Set the or mask?
+    if not args.ortrigger is None:
+        try:
+            args.ortrigger = int(args.ortrigger, base=16)
+        except ValueError as e:
+            args.ortrigger = chans2bitmask(parse_speclist(args.ortrigger))
+
+        # Write it out
+        writemask(lappdIfc.ZERSUPMASKOR_0, args.ortrigger)
 
     # Set the wait?
     if not args.wait is None:
@@ -230,7 +257,82 @@ calibrations = { 1 : 7,
                  8 : 63 }
 
 inverse_calibrations = { v : k for k,v in calibrations.items() }                 
-                 
+
+def parse_speclist(speclist):
+
+    # Speclist looks like
+    # [!]n1, [!]n2-n3, [!]s(x), [!]s(x)-s(y)...
+
+    # Make a regex for matching strip
+    p = re.compile(r's\((.*)\)')
+    
+    # Received
+    print("Received: ", speclist)
+    
+    # Get the individual specs
+    specs = [x.strip() for x in speclist.split(',')]
+
+    exclusions = []
+    inclusions = []
+    
+    for spec in specs:
+
+        # See if they are negated
+        negated = False
+        if spec[0] == '!':
+            negated = True
+            spec = spec[1:]
+            
+        try:
+            # First see if its a tile strip
+            m = p.match(spec)
+            if not m is None:
+
+                # Extract the strip number as a string
+                m = m.group(1)
+
+                print("Matched", m)
+                
+                # Get strip tuples of channels
+                tuples = [strips[s] for s in parse_speclist(m)]
+
+                # Inefficient comparison ::puke::
+                for tup in tuples:
+                    if negated:
+                        exclusions += tup
+                    else:
+                        inclusions += tup 
+            else:        
+                # Extract the bounds
+                bounds = [int(x) for x in spec.split('-')]
+
+                # Double up if necessary
+                if len(bounds) < 2:
+                    bounds.append(bounds[0])
+                
+                # Flip the if reversed
+                if bounds[0] > bounds[1]:
+                    tmp = bounds[1]
+                    bounds[1] = bounds[0]
+                    bounds[0] = tmp
+
+                # Add it to the appropriate list
+                # Interpret bounds as inclusive
+                if negated:
+                    exclusions += range(bounds[0], bounds[1]+1)
+                else:
+                    inclusions += range(bounds[0], bounds[1]+1)
+
+        except ValueError as e:
+            print("Did not understand %s, skipping..." % spec)
+
+
+    print("Include: ", inclusions)
+    print("Exclude: ", exclusions)
+    
+    # Filter out the exclusions from the inclusions
+    return [x for x in inclusions if x not in exclusions]
+
 #
 # Do a block write of EEVEE register space, using
 # fast register trasnactions
@@ -331,3 +433,13 @@ def chans2bitmask(chans):
         mask |= 1 << chan
 
     return mask
+
+#
+# Write a 64 bit mask, in little endian.
+# Do them both at once, so there's a greater chance of success under high rate.
+#
+def writemask(baseaddr, mask):
+    ifc.brd.poke({ baseaddr : mask & 0x00000000FFFFFFFF,
+                   baseaddr+4 : (mask & 0xFFFFFFFF00000000) >> 32 }, readback=False)
+    ifc.brd.transact()
+    

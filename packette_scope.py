@@ -54,7 +54,9 @@ zeros = np.zeros((1024), dtype=np.int16)
 dom = np.linspace(0, 1023, 1024) 
 
 # Title objects
-scope_title = scope.set_title("Waiting for data...")
+scope_title = scope.title
+
+scope_title.set_text("Waiting for data...")
 
 # Strip labels on channels
 bottom_labels = [(x, A2x_common.strips[x+1][1]) for x in range(28)]
@@ -139,11 +141,16 @@ def animate(i):
 
     # Get one off the deque
     try:
-        event = events.popEvent()
+        event = events.popEvent(timeout=None)
 
+        # Did we timeout?
+        if not event:
+            # Return nothing to update, but keep plot interactive at 10Hz
+            return [*lines, scope_title, heat, rect]
+                
         # Print it (looks cool)
         print(event)
-
+        
         # Keep track of the heatmap
         for chan in range(64):
             if chan in event.channels.keys():
@@ -170,10 +177,6 @@ def animate(i):
         heat.set_array(temps)
         
     except IndexError as e:
-        import traceback
-        print(e)
-        traceback.print_tb(e.__traceback__)
-        # Empty queue
         pass
     
     # Return all things to be updated

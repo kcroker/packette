@@ -560,7 +560,7 @@ class packetteRun(object):
                         print("Successfully forked data capture PID %d, writing to %s..." % (pid, fnames[0]), file=sys.stderr)
                 else:
                     # We want streaming, spawn a process to listen and parse
-                    print("packette_stream.py: streaming mode requested.  Events will be placed on a managed deque and can be acquired with eventPop()", file=sys.stderr)
+                    print("packette_stream.py: streaming mode requested.  Events will be placed on a managed deque and can be acquired with popEvent()", file=sys.stderr)
                     
                     manager = DequeManager()
                     manager.start()
@@ -623,16 +623,13 @@ class packetteRun(object):
             print("packette_stream.py: built event index for %s" % fnames[fhandle], file=sys.stderr)
 
     # In streaming mode, give a recent event off the deque
-    def popEvent(self):
+    def popEvent(self, timeout=None):
         try:
-            print("packette_stream.py: waiting until I can pop an event", file=sys.stderr)
-
             # Wait until there is data in the queue
-            self.shared_semaphore.acquire()
-            print("packette_stream.py: event popped!", file=sys.stderr)
-            
+            result = self.shared_semaphore.acquire(blocking=True, timeout=0.1)
+
             # Return it
-            return self.shared_deque.popleft()
+            return self.shared_deque.popleft() if result else False
         except AttributeError as e:
             print("packette_stream.py: you do not appear to be in streaming mode", file=sys.stderr)
             

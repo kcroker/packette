@@ -6,6 +6,7 @@ import pickle
 import queue
 import socket
 import time
+import numpy as np
 
 import A2x_common
 import lappdIfc
@@ -18,7 +19,7 @@ parser = A2x_common.create('Generic configuration tool for Ultralytics A2x serie
 parser.add_argument('-R', '--register', dest='registers', metavar='REGISTER', type=str, nargs=1, action='append', help='Peek and document the given register')
 parser.add_argument('-W', '--words', metavar='NUM_WORDS', type=int, help='Number of samples to report after DRS4 stop. (must be power of 2 for packette)')
 
-parser.add_argument('-T', '--threshold', action='store_true', help='Intake channel thresholds for zero suppression from stdin, with ASCII, line by line')
+parser.add_argument('-T', '--threshold', help='Intake channel thresholds for zero suppression from stdin, with ASCII, line by line')
 
 # Connect to the board
 ifc, args = A2x_common.connect(parser)
@@ -55,37 +56,35 @@ human_readable = {
 if args.words:
     ifc.brd.pokenow(lappdIfc.ADCBUFNUMWORDS, int(args.words))
 
+# Set a uniform trigger threshold
 if args.threshold:
 
-    # Set up some values
-    values = np.zeros((64), dtype=np.int16)
     
-    # Intake some thresholds
-    channel = 0
-    for datum in sys.stdin:
+#    try:
+        # Try to parse it
+     mV, chanspec = args.threshold.split(':')
 
-        # Sanity check
-        if channel == 64:
-            print("A2x_tool.py: too many datums, 64 channels my droog", file=sys.stderr)
-            exit(1)
+     value = np.int16(A2x_common.mVtoADC(float(mV)))
+     print("A2x_tool.py: read %s mV, understood it as ADC value %d" % (mV, value))
 
-        # Assign it
-        try:
-            values[channel] = np.int16(A2x_common.mVtoADC(float(datum)))
+     chans = A2x_common.parse_speclist(chanspec)
 
-            # Give some feedback
-            print("A2x_tool.py: read %s, understood it as ADC value %d" % (datum, values[channel]))
-        except ValueError as e:
-            print("A2x_tool.py: could not understand input %s for channel %d, it will be set to zero" % (datum, channel))
-            
-        # Increment
-        channel += 1
+     # Do a non-destructive set, so gotta read-em first
+     thresholds = A2x_common.blockread(ifc.brd, lappdIfc.ZEROTHRESH_0, 64)
 
-    # Everything unset is a zero
-    A2x_common.blockwrite(ifc.brd, ZEROTHRESH_0, values)
-    
-    # Feedback
-    print("A2x_tool.py: thresholds set")
+     # Now adjust
+     for chan in chans:
+         thresholds[chan] = value
+
+     # Now write the new values
+     A2x_common.blockwrite(ifc.brd, lappdIfc.ZEROTHRESH_0, thresholds)
+
+     # Feedback
+     print("A2x_tool.py: thresholds updated")
+
+#    except ValueError as e:
+ #       print("A2x_tool.py: could not understand input %s, no changes to trigger" % args.threshold)
+        
     
 #for reg in [lappdIfc.DRSREFCLKRATIO, 0x620, lappdIfc.ADCBUFNUMWORDS]:
 #    val = ifc.brd.peeknow(reg)

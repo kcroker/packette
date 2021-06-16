@@ -31,7 +31,7 @@ hitmap = ax[1]
 info = ax[2]
 
 # Remove the bs from the info
-info.axis('off')
+# info.axis('off')
 
 xmax = 1040
 xmin = -10
@@ -54,15 +54,28 @@ print("packette_scope.py: Initial lines established", file=sys.stderr)
 # We definitely have to hold things fixed, or else the scale will change with every pulse...
 scope.set_ylim(-30, 60)
 scope.set_xlim(xmin, xmax)
-scope.set_ylabel("Millivolts")
+scope.set_ylabel("Amplitude (mV)")
 scope.set_xlabel("Some unit of time between capacitors")
 scope.grid('on', linestyle='--', linewidth=1, color='gray')
 
+# Set up info
+# Use a deque() for event rate
+winlen = 10
+max_rate_accumulator = winlen*3
+event_rate_accumulator = deque(maxlen=max_rate_accumulator)
+window = np.ones(winlen)
+rate_line = info.plot(range(winlen), np.zeros((winlen)), color='green')[0]
+info.set_ylim(0, 6e3)
+info.set_xlim(0, winlen)
+info.set_yscale('symlog')
+info.grid('on', linestyle='--', linewidth=1, color='gray')
+info.set_xlabel('Event depth')
+info.set_ylabel('Event rate (Hz)')
 zeros = np.zeros((1024), dtype=np.int16)
 dom = np.linspace(0, 1023, 1024) 
 
 # Title objects
-scope_title = info.text(0,0, "Waiting for data...")
+scope_title = info.text(0.1,0.3, "Waiting for data...")
 
 # Strip labels on channels
 bottom_labels = [(x, A2x_common.strips[x+1][1]) for x in range(28)]
@@ -139,23 +152,48 @@ def temptag(chan, incr):
             temps[(0, 29 + cal-1)] += incr
         else:
             temps[(1, 29 + (cal-4)-1)] += incr
-    
+
+def moving_average(a, n=winlen) :
+    ret = np.cumsum(a, dtype=float)
+    ret[n:] = ret[n:] - ret[:-n]
+    return ret[n - 1:] / n
+            
 for i in range(64):
     temp_accumulators.append(deque())
 
+# Give a coarse estimate of event rate
+prev_event = None
+for i in range(winlen):
+    event_rate_accumulator.append(0)
+
+count = 0
+prev_time = time.time()
+prev_event = None
+
 def animate(i):
 
+    global count, prev_time, prev_event
+    
     # Get one off the deque
     try:
-        event = events.popEvent(timeout=None)
 
+        event = events.popEvent(timeout=None)
+       
         # Did we timeout?
         if not event:
             # Return nothing to update, but keep plot interactive at 10Hz
-            return [*lines, scope_title, heat, rect]
-                
+            return [*lines, scope_title, heat, rect, rate_line]
+
+        now = time.time()
+        if prev_event:
+            event_rate_accumulator.append((event.event_num - prev_event.event_num)/(now - prev_time))
+
+        # Remember
+        prev_event = event
+        prev_time = now
+        
         # Print it (looks cool)
-        print(event)
+        # print(event)
         
         # Keep track of the heatmap
         for chan in range(64):
@@ -171,7 +209,7 @@ def animate(i):
             
         # Set the title 
         scope_title.set_text("Board %s, Event %d" % (event.prettyid(), event.event_num))
-        
+
         # Update the channels
         for chan,line in enumerate(lines):
             if chan in event.channels.keys():
@@ -181,12 +219,21 @@ def animate(i):
 
         # Update the heatmap
         heat.set_array(temps)
+
+        # Update the event rate, when its full
+        #derp = moving_average(event_rate_accumulator)
+        derp = np.convolve(event_rate_accumulator, window, 'valid') / len(window)
+        rate_line.set_data(range(len(derp)), derp)
+        maxderp = np.amax(derp)
+        #info.set_ylim(maxderp*0.5, maxderp*1.5)
+
+        count += 1
         
     except IndexError as e:
         pass
     
     # Return all things to be updated
-    return (*lines, scope_title, heat, rect)
+    return (*lines, scope_title, heat, rect, rate_line)
 
 # Go as fast as possible, what could go wrong?
 ani = animation.FuncAnimation(fig, animate, interval=0, blit=True, save_count=10)

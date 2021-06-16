@@ -31,7 +31,7 @@ def create(leader):
     parser.add_argument('-N', metavar='NUM_SAMPLES', type=int, default=0, help='Issue N soft triggers of the board')
     parser.add_argument('-r', '--rate', metavar='RATE', type=float, default=100, help='The rate (in Hz) of software triggers')
     parser.add_argument('-I', '--initialize', action="store_true", help="Initialize the board")
-    parser.add_argument('-t', '--threads', metavar="NUM_THREADS", type=int, help="Number of distinct ports to receive data.  Ports increment from the aimed port.", default=1)
+    parser.add_argument('-t', '--threads', metavar="NUM_THREADS", type=int, help="Number of distinct ports to receive data.  Ports increment from the aimed port.")
 
     parser.add_argument('--adctestpattern', help='ADC custom mode test pattern')
     parser.add_argument('-e', '--external', type=int, help='Adjust extriggering (odd is on)')
@@ -105,8 +105,9 @@ def connect(parser):
     if args.initialize:
         ifc.Initialize()
 
-    # Set the requested threads on the hardware side 
-    ifc.brd.pokenow(lappdIfc.NUDPPORTS, args.threads)
+    # Set the requested threads on the hardware side
+    if args.threads is not None:
+        ifc.brd.pokenow(lappdIfc.NUDPPORTS, args.threads)
 
     # Give the socket address for use by spawn()
     if args.aim is not None:

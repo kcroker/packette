@@ -52,3 +52,5 @@ kill -2 -$pid
 # Uploade the pedestal
 time ./pedestal_upload.py "$pedestal" "$3"
 
+# Set threads back to expected behaviour and enable pedestal subtraction
+./A2x_tool.py -t 1 --pedestal 1 "$3"

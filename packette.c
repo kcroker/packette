@@ -292,7 +292,7 @@ unsigned long order_processor(void *buf,
       }
 
       // If we ended up here, it was a duplicate ==> drop it.
-      fprintf(stderr, "Duplicate sequence number %d...", ptr->assembly.seqnum);
+      fprintf(stderr, "Duplicate sequence number %ld...", ptr->assembly.seqnum);
     }
 
     // Advance to the next packet
@@ -443,7 +443,11 @@ int main(int argc, char **argv) {
   uint64_t prev_seqnum;            // Remembers the more recent sequence number written to the ordered stream
   struct tm lt;                    // For holding time stuff
   time_t secs;
-  char tmp1[1024], tmp2[1024];
+
+#define BUFLEN 1024  
+  char tmp1[BUFLEN], tmp2[BUFLEN];
+  char prefix[BUFLEN];
+  
   unsigned int stash;
   uint32_t prev_event_num;
   
@@ -453,8 +457,10 @@ int main(int argc, char **argv) {
   volatile unsigned long *packets_processed_ptr, *bytes_processed_ptr;
   unsigned long *previous_processed;
   unsigned long packets_processed, bytes_processed;
-  char output[4906];
+#define BIGBUFLEN (BUFLEN*10)
+  char output[BIGBUFLEN];
   float total_kpps, total_MBps, total_MB, total_Mp;
+  int output_msg_offset;
   
   // lol "basic" shit in C is annoying.
   // Default values
@@ -470,6 +476,9 @@ int main(int argc, char **argv) {
   // Things for event counting
   prev_event_num = 0;
   stash = -1;
+
+  // Things for reporting
+  output_msg_offset = 0;
   
   /////////////////// ARGUMENT PARSING //////////////////
   
@@ -581,6 +590,9 @@ int main(int argc, char **argv) {
 
   fprintf(stderr, "packette (parent): Using output prefix '%s'\n", tmp1);
 
+  // Herp a derp
+  strncpy(prefix, tmp1, BUFLEN);
+  
   // Allocated shared memory for performance statistics
   if(! (scratchpad = mmap(NULL,
 			  children*sizeof(unsigned long)*2,
@@ -673,15 +685,15 @@ int main(int argc, char **argv) {
     
     // Open streams for output
     if(!ordered_file) {
-      
-      sprintf(tmp2, "rawdata/%s_%s_%d.ordered", tmp1, addr_str, port + k - 1);
+
+      snprintf(tmp2, BUFLEN, "rawdata/%s_%s_%d.ordered", tmp1, addr_str, port + k - 1);
       if( ! (ordered_file = fopen(tmp2, "wb"))) {
 	perror("fopen()");
 	exit(EXIT_FAILURE);
       }
     }
     
-    sprintf(tmp2, "rawdata/%s_%s_%d.orphans", tmp1, addr_str, port + k - 1);
+    snprintf(tmp2, BUFLEN, "rawdata/%s_%s_%d.orphans", tmp1, addr_str, port + k - 1);
     
     // Open streams for output
     if( ! (orphan_file = fopen(tmp2, "wb"))) {
@@ -924,6 +936,7 @@ int main(int argc, char **argv) {
 	break;
       
       // Reset the output buffer position for sprintf
+      output_msg_offset = 0;
       output[0] = 0;
 
       // Reset the running totals
@@ -944,14 +957,14 @@ int main(int argc, char **argv) {
 	
 	// XXX Clearly not safe
 	// packets always 33 wide
-	sprintf(output,
-		"%s%6.d | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n",
-		output,
-		kids[k],
-		1000.0*(packets_processed - previous_processed[2*k])/REFRESH_PERIOD,
-		1.0*(bytes_processed - previous_processed[2*k + 1])/REFRESH_PERIOD,
-		packets_processed/1e6,
-		bytes_processed/1e6);
+	output_msg_offset += snprintf(output + output_msg_offset,
+				      BIGBUFLEN - output_msg_offset,
+				      "%6.d | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n",
+				      kids[k],
+				      1000.0*(packets_processed - previous_processed[2*k])/REFRESH_PERIOD,
+				      1.0*(bytes_processed - previous_processed[2*k + 1])/REFRESH_PERIOD,
+				      packets_processed/1e6,
+				      bytes_processed/1e6);
 
 	// Add totals
 	total_kpps += 1000.0*(packets_processed - previous_processed[2*k])/REFRESH_PERIOD;
@@ -966,24 +979,30 @@ int main(int argc, char **argv) {
       }
       
       // Add in the totals
-      sprintf(output,
-	      "%s-----------------------------------------------------------------\n", output);
+      output_msg_offset += snprintf(output + output_msg_offset,
+				    BIGBUFLEN - output_msg_offset,
+				    "-----------------------------------------------------------------\n");
 
-      sprintf(output,
-	      "%s Total | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n\n",
-	      output,
-	      total_kpps,
-	      total_MBps,
-	      total_Mp,
-	      total_MB);
+      output_msg_offset += snprintf(output + output_msg_offset,
+				    BIGBUFLEN - output_msg_offset,
+				    "Total | %9.3f kpps (%9.3fMBps) | %7.3f Mp (%7.3fMB)\n\n",
+				    total_kpps,
+				    total_MBps,
+				    total_Mp,
+				    total_MB);
 
       // ncurses output?
       if(ordered_file != stdout) {
 	mvprintw(11,0,output);
-	mvprintw(15+children,0,"Press Ctrl+C when you've had your fill...");
+
+	// Make a useful output
+	snprintf(tmp1, BUFLEN, "Recording to prefix: %s\nPress Ctrl+C to terminate...", prefix);
+	mvprintw(15+children, 0, tmp1);
 	if(count > 0) {
-	  sprintf(output, "...otherwise accumulating %d events per child", count-1);
-	  mvprintw(16+children,0,output);
+	  snprintf(tmp1,
+		   BUFLEN,
+		   "...otherwise accumulating %d events per child", count-1);
+	  mvprintw(16+children, 0, tmp1);
 	}
 	
 	refresh();

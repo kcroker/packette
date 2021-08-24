@@ -2,20 +2,27 @@
 threads=4
 baseport=23000
 rate=400
+count=1000
+prefix=`date +%s`
+
+# Let the user know how long this will take
+duration=`echo "$count/$rate" | bc -l`
+echo "Requesting $2 pedestals at $rate Hz, this will take $duration seconds..."
+
 
 # Enable job controlling...
 set -m
 
 # See if the target board is up
-ping -c 2 -i 0.2 "$3" > /dev/null
+ping -c 2 -i 0.2 "$1" > /dev/null
 
 if [ "$?" -ne "0" ]; then
-    echo "Looks like the board is not up?"
+    echo "Looks like the board at $1 is not up?"
     exit;
 fi
 
 echo "Running packette in the background..."
-./packette 10.0.6.254 -q -f "$1" -t $threads -p $baseport &
+./packette 10.0.6.254 -q -f "$prefix" -t $threads -p $baseport &
 pid=$!
 
 echo "Giving packette some time to start..."
@@ -27,8 +34,11 @@ if [ "$?" -ne "0" ]; then
     exit 1
 fi
 
+echo "Giving the DRS4s some time to settle down..."
+sleep 0.5
+
 echo "Requesting unmodified waveforms..."
-time ./A2x_tool.py -I -c 0xffffffffffffffff --zsuppress 0 --pedestal 0 -r $rate -t $threads -a $baseport -N "$2" "$3"
+time ./A2x_tool.py -I -c 0xffffffffffffffff --zsuppress 0 --pedestal 0 -r $rate -t $threads -a $baseport -N "$count" "$1"
 
 if [ "$?" -ne "0" ]; then
     echo "Waveform request has failed.  Killing packette."
@@ -41,7 +51,7 @@ fi
 echo "Verifying that packette is still running (meaning we got data)..."
     
 echo "Computing the pedestal..."
-pedestal=`./pedestal_calibration.py rawdata/$1_*.ordered | tail -n 1`
+pedestal=`./pedestal_calibration.py rawdata/"$prefix"_*.ordered | tail -n 1`
 
 echo "Telling packette and everything descended from PID $pid to stop listening..."
 kill -2 -$pid
@@ -50,7 +60,7 @@ kill -2 -$pid
 ./describe_pedestal.py "$pedestal" > pedestal_ascii
 
 # Uploade the pedestal
-time ./pedestal_upload.py "$pedestal" "$3"
+time ./pedestal_upload.py "$pedestal" "$1"
 
 # Set threads back to expected behaviour and enable pedestal subtraction
-./A2x_tool.py -t 1 --pedestal 1 "$3"
+./A2x_tool.py -t 1 --pedestal 1 "$1"
